@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { TopNav } from "@/components/top-nav";
-import { ProjectTabs } from "@/components/project-tabs";
 import { ProjectHero } from "@/components/project-hero";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
 
@@ -37,7 +38,15 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
           title="协作平台会员贡献统计"
           subtitle="按成员贡献度、阶段进展和周活跃度查看项目推进情况。"
         />
-        <ProjectTabs projectId={projectId} />
+        <div className="mb-6">
+          <Link
+            href={`/project/${projectId}`}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            返回主界面
+          </Link>
+        </div>
 
         <div className="mb-10">
           <div className="mb-6 flex flex-wrap gap-4">
