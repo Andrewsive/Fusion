@@ -1,9 +1,10 @@
 "use client";
 
+
 import { useState } from "react";
 import clsx from "clsx";
+
 import { TopNav } from "@/components/top-nav";
-import { ProjectTabs } from "@/components/project-tabs";
 import { ProjectHero } from "@/components/project-hero";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
 
@@ -165,7 +166,15 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
           title="协作平台成员贡献统计"
           subtitle="聚焦成员贡献排名与维度能力，帮助团队快速识别长板和短板。"
         />
-        <ProjectTabs projectId={projectId} />
+        <div className="mb-6">
+          <Link
+            href={`/project/${projectId}`}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            返回主界面
+          </Link>
+        </div>
 
         <section className="mb-6 rounded-2xl bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
           <div className="grid gap-3 text-sm md:grid-cols-4">
