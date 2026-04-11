@@ -1,6 +1,7 @@
-﻿import { Task, User } from "@prisma/client";
+export type AllocTaskInput = { title: string; workloadPoints: number };
+export type AllocMember = { id: string };
 
-export function allocateTasksEvenly(tasks: Array<Pick<Task, "title" | "workloadPoints">>, members: User[]) {
+export function allocateTasksEvenly(tasks: AllocTaskInput[], members: AllocMember[]) {
   if (members.length === 0) {
     throw new Error("At least one member is required for allocation");
   }

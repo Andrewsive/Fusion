@@ -3,6 +3,18 @@ import { prisma } from "@/lib/prisma";
 import { getWarningLevel } from "@/lib/warning";
 import { requireProjectMember } from "@/lib/auth";
 
+function parseKeyDeliverables(raw: string | null | undefined): string[] | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as unknown;
+    if (!Array.isArray(v)) return null;
+    const list = v.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+    return list.length ? list : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -44,14 +56,23 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       )
     );
 
-    const me = members.find((m) => m.userId === meId)?.user ?? members[0]?.user;
-
+    const myMembership = members.find((m) => m.userId === meId);
+    const me = myMembership?.user ?? members[0]?.user;
+    
     if (!me) {
       return NextResponse.json({ error: "User is not in project" }, { status: 403 });
     }
 
+    const isOwner = myMembership.role === "OWNER";
+
+    const { keyDeliverables: rawDeliverables, ...projectRest } = project;
+
     return NextResponse.json({
-      project,
+      isOwner,
+      project: {
+        ...projectRest,
+        keyDeliverables: parseKeyDeliverables(rawDeliverables)
+      },
       me,
       members: members.map((member) => member.user),
       tasks: tasksWithWarning,

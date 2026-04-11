@@ -1,8 +1,9 @@
-﻿import { TaskStatus, WarningLevel } from "@/lib/domain";
+import { TaskStatus, WarningLevel } from "@/lib/domain";
 
 export type DashboardTask = {
   id: string;
   title: string;
+  sourceLabel?: string | null;
   status: TaskStatus;
   workloadPoints: number;
   deadline: string;
@@ -12,10 +13,13 @@ export type DashboardTask = {
 };
 
 export type DashboardData = {
+  /** 项目创建者，可编辑任务草稿并确认写入 */
+  isOwner: boolean;
   project: {
     id: string;
     title: string;
     contextSummary: string;
+    keyDeliverables?: string[] | null;
     deadline: string;
     inviteCode: string;
   };
