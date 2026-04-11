@@ -4,6 +4,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import clsx from "clsx";
+import { ArrowLeft } from "lucide-react";
 
 import { TopNav } from "@/components/top-nav";
 import { ProjectHero } from "@/components/project-hero";
