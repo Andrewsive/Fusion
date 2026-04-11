@@ -37,7 +37,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           data: {
             status: "DONE",
             assigneeId
-          }
+          },
+          include: { assignee: true }
         });
 
         await tx.user.update({
@@ -50,7 +51,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
             projectId: task.projectId,
             userId,
             actionType: "TASK_DONE",
-            description: `${updatedTask.title} marked DONE (+${task.workloadPoints} points)`
+            description: `任务完成：${updatedTask.title}｜完成人：${updatedTask.assignee?.name ?? "未分配"}｜奖励：+${task.workloadPoints} 积分`
           }
         });
 
@@ -65,7 +66,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       data: {
         status: body.status,
         assigneeId: body.assigneeId ?? task.assigneeId ?? (body.status === "TODO" ? userId : null)
-      }
+      },
+      include: { assignee: true }
     });
 
     await prisma.actionLog.create({
@@ -73,7 +75,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         projectId: task.projectId,
         userId,
         actionType: "TASK_STATUS_CHANGED",
-        description: `${updated.title} moved to ${body.status}`
+        description: `状态更新：${updated.title}｜负责人：${updated.assignee?.name ?? "未分配"}｜当前状态：${body.status}`
       }
     });
 

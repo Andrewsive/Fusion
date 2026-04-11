@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { parseRequirementWithAI } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
@@ -16,6 +16,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const body = inputSchema.parse(await request.json());
 
     const ai = await parseRequirementWithAI(body.requirementText);
+    const sourceLabel = "AI 自动生成";
 
     const members = await prisma.projectMember.findMany({
       where: { projectId: id },
@@ -46,6 +47,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             projectId: id,
             assigneeId: task.assigneeId,
             title: task.title,
+            sourceLabel,
             workloadPoints: task.workloadPoints,
             status: "TODO",
             deadline
@@ -58,7 +60,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
       await tx.project.update({
         where: { id },
-        data: { contextSummary: ai.contextSummary }
+        data: {
+          contextSummary: ai.contextSummary,
+          keyDeliverables: JSON.stringify(ai.keyDeliverables)
+        }
       });
 
       await tx.actionLog.create({
@@ -66,7 +71,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           projectId: id,
           userId,
           actionType: "AI_AUTO_ASSIGNED",
-          description: `AI generated and assigned ${tasks.length} tasks` 
+          description: `AI generated and assigned ${tasks.length} tasks｜来源：${sourceLabel}`
         }
       });
 
