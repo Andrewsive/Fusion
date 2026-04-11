@@ -63,7 +63,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       return NextResponse.json({ error: "User is not in project" }, { status: 403 });
     }
 
-    const isOwner = myMembership.role === "OWNER";
+    const isOwner = myMembership?.role === "OWNER";
 
     const { keyDeliverables: rawDeliverables, ...projectRest } = project;
 
