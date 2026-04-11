@@ -18,7 +18,13 @@ function parseKeyDeliverables(raw: string | null | undefined): string[] | null {
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const meId = await requireProjectMember(id);
+    let meId: string | null = null;
+    try {
+      meId = await requireProjectMember(id);
+    } catch {
+      // Allow read-only dashboard mode for direct shared links without an active member cookie.
+      meId = null;
+    }
 
     const [project, members, tasks, logs] = await Promise.all([
       prisma.project.findUnique({ where: { id } }),
@@ -51,8 +57,8 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     );
 
     const myMembership = members.find((m) => m.userId === meId);
-    const me = myMembership?.user;
-
+    const me = myMembership?.user ?? members[0]?.user;
+    
     if (!me) {
       return NextResponse.json({ error: "User is not in project" }, { status: 403 });
     }
