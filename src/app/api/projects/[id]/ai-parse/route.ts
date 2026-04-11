@@ -1,8 +1,10 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { parseRequirementWithAI } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
 import { requireProjectMember } from "@/lib/auth";
+
+export const maxDuration = 300;
 
 const inputSchema = z.object({
   requirementText: z.string().min(10)
@@ -18,7 +20,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     await prisma.project.update({
       where: { id },
-      data: { contextSummary: ai.contextSummary }
+      data: {
+        contextSummary: ai.contextSummary,
+        keyDeliverables: JSON.stringify(ai.keyDeliverables)
+      }
     });
 
     await prisma.actionLog.create({
@@ -30,7 +35,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }
     });
 
-    return NextResponse.json({ contextSummary: ai.contextSummary, suggestedTasks: ai.tasks });
+    return NextResponse.json({
+      contextSummary: ai.contextSummary,
+      keyDeliverables: ai.keyDeliverables,
+      suggestedTasks: ai.tasks
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "AI parsing failed" },

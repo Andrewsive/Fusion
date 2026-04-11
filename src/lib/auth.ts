@@ -1,4 +1,4 @@
-﻿import { cookies } from "next/headers";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 
 export const USER_COOKIE = "fusion_user_id";
@@ -42,4 +42,13 @@ export async function isProjectOwner(projectId: string, userId: string): Promise
   });
 
   return member?.role === "OWNER";
+}
+
+export async function requireProjectOwner(projectId: string): Promise<string> {
+  const userId = await requireProjectMember(projectId);
+  const owner = await isProjectOwner(projectId, userId);
+  if (!owner) {
+    throw new Error("Only project owner (组长) can perform this action");
+  }
+  return userId;
 }
