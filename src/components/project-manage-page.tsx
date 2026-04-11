@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { BellRing, FileUp, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, BellRing, FileUp, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { TopNav } from "@/components/top-nav";
-import { ProjectTabs } from "@/components/project-tabs";
 import { ProjectHero } from "@/components/project-hero";
+import { ReallocateDialog } from "@/components/reallocate-dialog";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
-import { DashboardTask } from "@/lib/types";
+import { buildDraftFromSuggested, type TaskDraftRow } from "@/lib/task-draft";
+import { DashboardData, DashboardTask } from "@/lib/types";
 
 function statusTone(task: DashboardTask) {
   if (task.warningLevel === "CRITICAL") return "text-red-500";
@@ -14,13 +16,308 @@ function statusTone(task: DashboardTask) {
   return "text-slate-800";
 }
 
-function avatarToken(name: string) {
-  return name.slice(0, 1).toUpperCase();
+function normalizeTaskTitle(title: string) {
+  return title
+    .replace(/^(\[Reallocated\]\s*)+/g, "")
+    .replace(/^(\[Split\s+\d+\/\d+\]\s*)+/g, "")
+    .trim();
 }
 
+function taskIdentityKey(task: Pick<DashboardTask, "title" | "sourceLabel">) {
+  return `${task.sourceLabel ?? "未标注来源"}__${normalizeTaskTitle(task.title)}`;
+}
+
+function canReallocateTask(task: DashboardTask) {
+  return task.warningLevel === "CRITICAL" && task.status !== "DONE";
+}
+
+function criticalLabel(task: DashboardTask) {
+  if (task.warningLevel !== "CRITICAL") return "";
+  return new Date(task.deadline).getTime() <= Date.now() ? "（已逾期）" : "（24 小时内）";
+}
+
+function ganttSlotIndex(deadline: string) {
+  const day = new Date(deadline).getDate();
+  const slots = [5, 6, 7, 8, 9, 10, 11];
+  const index = slots.indexOf(day);
+  return index >= 0 ? index : Math.max(0, Math.min(slots.length - 1, day - 5));
+}
+
+function ganttBarStyle(task: DashboardTask, laneIndex: number) {
+  const slot = ganttSlotIndex(task.deadline);
+  const left = Math.min(84, slot * 13.5 + laneIndex * 2.5);
+  const width = Math.min(30, 12 + task.workloadPoints * 1.8);
+
+  return {
+    left: `${left}%`,
+    width: `${width}%`
+  };
+}
+
+function ganttBarMetrics(task: DashboardTask) {
+  const slot = ganttSlotIndex(task.deadline);
+  const left = Math.min(84, slot * 13.5);
+  const width = Math.min(30, 12 + task.workloadPoints * 1.8);
+  return {
+    left,
+    width,
+    right: left + width
+  };
+}
+
+function buildLaneLayouts(tasks: DashboardTask[]) {
+  const sorted = [...tasks].sort(
+    (a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
+  );
+  const rows: Array<Array<{ id: string; left: number; right: number }>> = [];
+
+  return sorted.map((task) => {
+    const metrics = ganttBarMetrics(task);
+    let rowIndex = 0;
+
+    while (true) {
+      const row = rows[rowIndex] ?? [];
+      const overlap = row.some((item) => !(metrics.right < item.left || metrics.left > item.right));
+      if (!overlap) {
+        row.push({ id: task.id, left: metrics.left, right: metrics.right });
+        rows[rowIndex] = row;
+        return {
+          task,
+          rowIndex,
+          left: metrics.left,
+          width: metrics.width
+        };
+      }
+      rowIndex += 1;
+    }
+  });
+}
+
+function laneTone(index: number) {
+  const tones = [
+    "bg-sky-50/45",
+    "bg-emerald-50/45",
+    "bg-amber-50/45",
+    "bg-rose-50/45",
+    "bg-violet-50/45"
+  ];
+
+  return tones[index % tones.length];
+}
+
+function classifyLog(actionType: string) {
+  if (actionType === "TASK_REALLOCATED") {
+    return {
+      label: "任务转交",
+      className: "border-amber-100 bg-amber-50 text-amber-800"
+    };
+  }
+
+  if (actionType === "TASK_DONE") {
+    return {
+      label: "任务完成",
+      className: "border-emerald-100 bg-emerald-50 text-emerald-600"
+    };
+  }
+
+  if (actionType === "TASK_STATUS_CHANGED") {
+    return {
+      label: "状态更新",
+      className: "border-sky-100 bg-sky-50 text-sky-700"
+    };
+  }
+
+  return {
+    label: "系统记录",
+    className: "border-slate-200 bg-slate-50 text-slate-600"
+  };
+}
+
+function splitLogDescription(description: string) {
+  const penaltyMarker = "｜处罚：";
+  if (!description.includes(penaltyMarker)) {
+    return {
+      main: description,
+      penalty: null as string | null
+    };
+  }
+
+  const [main, penalty] = description.split(penaltyMarker);
+  return {
+    main,
+    penalty: penalty ? `处罚：${penalty}` : null
+  };
+}
+
+function formatLogTime(createdAt: string) {
+  return new Date(createdAt).toLocaleString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function dedupeLogs(logs: DashboardData["logs"]) {
+  const seen = new Set<string>();
+
+  return logs.filter((log) => {
+    const minuteBucket = new Date(log.createdAt).toISOString().slice(0, 16);
+    const key = `${log.actionType}__${log.description}__${minuteBucket}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+const ACCEPT_UPLOAD =
+  ".pdf,.txt,.md,text/plain,text/markdown,application/pdf,image/png,image/jpeg,image/webp,image/gif";
+
 export function ProjectManagePage({ projectId }: { projectId: string }) {
-  const { data, error } = useProjectDashboard(projectId);
+  const { data, error, refresh } = useProjectDashboard(projectId);
   const [view, setView] = useState<"list" | "gantt">("list");
+  const [uploadPhase, setUploadPhase] = useState<"idle" | "extracting" | "parsing">("idle");
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [draftTasks, setDraftTasks] = useState<TaskDraftRow[] | null>(null);
+  const [draftSourceLabel, setDraftSourceLabel] = useState("");
+  const [commitLoading, setCommitLoading] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
+  const [reallocateTaskId, setReallocateTaskId] = useState<string | null>(null);
+  const [reallocateLoading, setReallocateLoading] = useState(false);
+  const [reallocateError, setReallocateError] = useState<string | null>(null);
+
+  const runUpload = useCallback(
+    async (file: File, isOwner: boolean, members: { id: string }[]) => {
+      setUploadError(null);
+      setCommitError(null);
+      if (!isOwner) {
+        setUploadError("仅项目创建者（组长）可在此上传文档并生成可编辑的任务草稿。");
+        return;
+      }
+      setUploadPhase("extracting");
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const extractRes = await fetch("/api/ai/extract", { method: "POST", body: formData });
+        const extractPayload = await extractRes.json();
+        if (!extractRes.ok) {
+          throw new Error(typeof extractPayload.error === "string" ? extractPayload.error : "文档读取失败");
+        }
+        const text = String(extractPayload.text ?? "").trim();
+        if (text.length < 10) {
+          throw new Error("未能从文件中提取足够文本，请尝试更清晰的 PDF、纯文本或图片。");
+        }
+
+        setUploadPhase("parsing");
+        const parseRes = await fetch(`/api/projects/${projectId}/ai-parse`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requirementText: text })
+        });
+        const parsePayload = await parseRes.json();
+        if (!parseRes.ok) {
+          throw new Error(typeof parsePayload.error === "string" ? parsePayload.error : "AI 解析失败");
+        }
+
+        await refresh();
+
+        const suggested = parsePayload.suggestedTasks;
+        if (Array.isArray(suggested) && suggested.length > 0 && members.length > 0) {
+          const normalized = suggested
+            .map((t: { title?: unknown; workloadPoints?: unknown; deadlineOffsetHours?: unknown }) => ({
+              title: String(t.title ?? "").trim(),
+              workloadPoints: Number(t.workloadPoints),
+              deadlineOffsetHours: Number(t.deadlineOffsetHours)
+            }))
+            .filter(
+              (t) =>
+                t.title.length > 0 &&
+                Number.isInteger(t.workloadPoints) &&
+                t.workloadPoints > 0 &&
+                Number.isInteger(t.deadlineOffsetHours) &&
+                t.deadlineOffsetHours >= 1 &&
+                t.deadlineOffsetHours <= 240
+            );
+          const rows = buildDraftFromSuggested(normalized, members);
+          setDraftTasks(rows.length > 0 ? rows : null);
+        } else {
+          setDraftTasks(null);
+        }
+      } catch (e) {
+        setUploadError(e instanceof Error ? e.message : "上传处理失败");
+      } finally {
+        setUploadPhase("idle");
+      }
+    },
+    [projectId, refresh]
+  );
+
+  const commitDraft = useCallback(async () => {
+    if (!draftTasks?.length) return;
+    setCommitError(null);
+    setCommitLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/tasks/commit-draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceLabel: draftSourceLabel.trim(), tasks: draftTasks })
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(typeof payload.error === "string" ? payload.error : "写入失败");
+      }
+      setDraftTasks(null);
+      setDraftSourceLabel("");
+      await refresh();
+    } catch (e) {
+      setCommitError(e instanceof Error ? e.message : "写入失败");
+    } finally {
+      setCommitLoading(false);
+    }
+  }, [draftSourceLabel, draftTasks, projectId, refresh]);
+
+  function updateDraftRow(index: number, patch: Partial<TaskDraftRow>) {
+    setDraftTasks((prev) => {
+      if (!prev) return prev;
+      const next = [...prev];
+      next[index] = { ...next[index], ...patch };
+      return next;
+    });
+  }
+
+  function removeDraftRow(index: number) {
+    setDraftTasks((prev) => {
+      if (!prev) return prev;
+      const next = prev.filter((_, i) => i !== index);
+      return next.length > 0 ? next : null;
+    });
+  }
+
+  function openReallocateDialog(taskId: string) {
+    setReallocateError(null);
+    setReallocateTaskId(taskId);
+  }
+
+  function closeReallocateDialog() {
+    if (reallocateLoading) return;
+    setReallocateError(null);
+    setReallocateTaskId(null);
+  }
+
+  const nextSourceLabel = data
+    ? `第${new Set(data.tasks.map((task) => task.sourceLabel).filter(Boolean)).size + 1}批作业要求`
+    : "";
+
+  useEffect(() => {
+    if (!data) return;
+    if (!draftTasks?.length) {
+      setDraftSourceLabel(nextSourceLabel);
+    }
+  }, [data, draftTasks, nextSourceLabel]);
 
   if (error) {
     return <main className="min-h-screen bg-white p-8 text-critical">{error}</main>;
@@ -30,44 +327,308 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
     return <main className="min-h-screen bg-white p-8">Loading...</main>;
   }
 
-  const orderedTasks = [...data.tasks].sort(
+  const visibleTasks = Array.from(
+    data.tasks
+      .filter((task) => task.status !== "REALLOCATED")
+      .reduce((map, task) => {
+        const identityKey = taskIdentityKey(task);
+        const existing = map.get(identityKey);
+
+        if (!existing || new Date(task.deadline).getTime() >= new Date(existing.deadline).getTime()) {
+          map.set(identityKey, task);
+        }
+
+        return map;
+      }, new Map<string, DashboardTask>())
+      .values()
+  );
+
+  const orderedTasks = [...visibleTasks].sort(
     (a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
   );
+
+  const deliverables =
+    data.project.keyDeliverables?.filter((x) => typeof x === "string" && x.trim().length > 0) ?? [];
+  const visibleLogs = dedupeLogs(data.logs).slice(0, 6);
+  const busy = uploadPhase !== "idle";
+  const canCommitDraft = data.isOwner && Boolean(draftTasks?.length) && !commitLoading && !busy;
+  const selectedTask = orderedTasks.find((task) => task.id === reallocateTaskId) ?? null;
+
+  async function confirmReallocation(payload: {
+    newDeadline: string;
+    allocations: Array<{ assigneeId: string; workloadPoints: number }>;
+  }) {
+    if (!selectedTask || payload.allocations.length === 0) return;
+    setReallocateError(null);
+    setReallocateLoading(true);
+
+    try {
+      const res = await fetch(`/api/tasks/${selectedTask.id}/reallocate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const responseBody = await res.json();
+
+      if (!res.ok) {
+        throw new Error(typeof responseBody.error === "string" ? responseBody.error : "重新分配失败");
+      }
+
+      setReallocateTaskId(null);
+      await refresh();
+    } catch (e) {
+      setReallocateError(e instanceof Error ? e.message : "重新分配失败");
+    } finally {
+      setReallocateLoading(false);
+    }
+  }
 
   return (
     <main className="min-h-screen bg-bg">
       <TopNav />
       <div className="shell py-6">
-        <ProjectHero project={data.project} title="项目管理" subtitle="上传文档、查看任务列表，并跟踪系统干预记录。" />
-        <ProjectTabs projectId={projectId} />
+        <ProjectHero
+          project={data.project}
+          title="项目管理"
+          subtitle={
+            data.isOwner
+              ? "组长：上传并解析作业全文后，可编辑任务草稿并按阶段多次写入；刷新页面会丢失未确认的草稿。"
+              : "查看任务与公告；上传与任务排期仅组长（项目创建者）可操作。"
+          }
+        />
+        <div className="mb-6">
+          <Link
+            href={`/project/${projectId}`}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            返回主界面
+          </Link>
+        </div>
 
         <section className="line-card mb-8 p-6">
           <div className="grid gap-4 lg:grid-cols-[1.05fr_1fr]">
-            <div className="rounded-[28px] border border-dashed border-slate-200 bg-white p-10 text-center">
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="sr-only"
+              accept={ACCEPT_UPLOAD}
+              disabled={busy || !data.isOwner}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void runUpload(file, data.isOwner, data.members);
+              }}
+            />
+            <button
+              type="button"
+              disabled={busy || !data.isOwner}
+              onClick={() => fileInputRef.current?.click()}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!busy && data.isOwner) setDragActive(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setDragActive(false);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setDragActive(false);
+                if (busy || !data.isOwner) return;
+                const file = e.dataTransfer.files?.[0];
+                if (file) void runUpload(file, data.isOwner, data.members);
+              }}
+              className={`rounded-[28px] border border-dashed bg-white p-10 text-center transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:cursor-not-allowed disabled:opacity-60 ${
+                dragActive ? "border-blue-400 bg-blue-50/40" : "border-slate-200"
+              }`}
+            >
               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-line bg-slate-50">
-                <FileUp className="h-7 w-7 text-slate-500" />
+                {busy ? (
+                  <Loader2 className="h-7 w-7 animate-spin text-blue-500" />
+                ) : (
+                  <FileUp className="h-7 w-7 text-slate-500" />
+                )}
               </div>
               <div className="mt-6 text-3xl font-semibold tracking-tight">上传作业要求文档</div>
-              <p className="mt-3 text-sm text-muted">支持 PDF、图片和文本，上传后可进入 AI 提取流程。</p>
-            </div>
+              <p className="mt-3 text-sm text-muted">
+                支持 PDF、图片和文本；点击或拖拽文件到此处，将自动提取文本并由 AI 解析全文（含建议任务）。
+              </p>
+              {!data.isOwner ? (
+                <p className="mt-4 text-sm font-medium text-amber-700">仅组长可在此上传并生成任务草稿。</p>
+              ) : null}
+            </button>
 
             <div className="soft-panel rounded-[28px] p-6">
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 text-lg font-semibold">
-                  <RefreshCw className="h-5 w-5 text-blue-500" />
-                  AI 正在提取关键产出物...
+                <div className="flex min-w-0 items-center gap-3 text-lg font-semibold">
+                  {uploadPhase === "extracting" ? (
+                    <Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-500" />
+                  ) : uploadPhase === "parsing" ? (
+                    <RefreshCw className="h-5 w-5 shrink-0 animate-spin text-blue-500" />
+                  ) : (
+                    <RefreshCw className="h-5 w-5 shrink-0 text-slate-400" />
+                  )}
+                  <span className="truncate">
+                    {uploadPhase === "extracting"
+                      ? "正在读取文档…"
+                      : uploadPhase === "parsing"
+                        ? "AI 正在提取关键产出物…"
+                        : deliverables.length > 0
+                          ? "AI 已提取关键产出物"
+                          : "AI 提取关键产出物"}
+                  </span>
                 </div>
-                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1 text-sm font-medium text-emerald-700">
-                  Done
-                </span>
+                {uploadError ? (
+                  <span className="shrink-0 rounded-full border border-red-200 bg-red-50 px-4 py-1 text-sm font-medium text-red-700">
+                    失败
+                  </span>
+                ) : busy ? (
+                  <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-4 py-1 text-sm font-medium text-amber-800">
+                    处理中
+                  </span>
+                ) : deliverables.length > 0 ? (
+                  <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1 text-sm font-medium text-emerald-700">
+                    已完成
+                  </span>
+                ) : (
+                  <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-4 py-1 text-sm font-medium text-slate-600">
+                    待上传
+                  </span>
+                )}
               </div>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <span className="rounded-full border border-line bg-white px-4 py-2 text-sm shadow-card">[调研报告]</span>
-                <span className="rounded-full border border-line bg-white px-4 py-2 text-sm shadow-card">[Figma 原型]</span>
+              {uploadError ? (
+                <p className="mt-4 text-sm text-red-600">{uploadError}</p>
+              ) : null}
+              <div className="mt-5 flex min-h-[48px] flex-wrap gap-3">
+                {deliverables.length > 0 ? (
+                  deliverables.map((label, idx) => (
+                    <span
+                      key={`${idx}-${label}`}
+                      className="rounded-full border border-line bg-white px-4 py-2 text-sm shadow-card"
+                    >
+                      [{label}]
+                    </span>
+                  ))
+                ) : !busy ? (
+                  <p className="text-sm text-muted">上传左侧文档后，将在此显示模型识别出的交付物标签。</p>
+                ) : null}
               </div>
             </div>
           </div>
         </section>
+
+        {data.isOwner && draftTasks && draftTasks.length > 0 ? (
+          <section className="line-card mb-8 overflow-hidden p-6">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold tracking-tight">任务草稿（未写入数据库）</h2>
+                <p className="mt-1 text-sm text-muted">
+                  刷新页面会丢失。确认后会作为新一批任务写入项目列表；相对截止会换算为具体日期（不超过项目截止）。
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={!canCommitDraft || draftSourceLabel.trim().length === 0}
+                onClick={() => void commitDraft()}
+                className="shrink-0 rounded-full bg-accent px-5 py-2.5 text-sm font-medium text-white transition enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {commitLoading ? "写入中…" : "确认新增这一批任务"}
+              </button>
+            </div>
+            {commitError ? <p className="mb-3 text-sm text-red-600">{commitError}</p> : null}
+            <div className="mb-4 max-w-sm">
+              <label className="mb-2 block text-sm font-medium text-slate-700">来源标签</label>
+              <input
+                className="w-full rounded-xl border border-line bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+                value={draftSourceLabel}
+                onChange={(e) => setDraftSourceLabel(e.target.value)}
+                placeholder="例如：第一阶段作业要求"
+              />
+            </div>
+            <div className="overflow-x-auto rounded-2xl border border-line">
+              <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-line bg-slate-50 text-slate-600">
+                    <th className="px-3 py-3 font-semibold">任务名称</th>
+                    <th className="w-28 px-3 py-3 font-semibold">工作量</th>
+                    <th className="w-36 px-3 py-3 font-semibold">相对截止（小时）</th>
+                    <th className="min-w-[140px] px-3 py-3 font-semibold">负责人</th>
+                    <th className="w-14 px-2 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {draftTasks.map((row, index) => (
+                    <tr key={`draft-${index}`} className="border-b border-line last:border-0">
+                      <td className="px-3 py-2 align-middle">
+                        <input
+                          className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+                          value={row.title}
+                          onChange={(e) => updateDraftRow(index, { title: e.target.value })}
+                        />
+                      </td>
+                      <td className="px-3 py-2 align-middle">
+                        <input
+                          type="number"
+                          min={1}
+                          className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+                          value={row.workloadPoints}
+                          onChange={(e) =>
+                            updateDraftRow(index, { workloadPoints: Math.max(1, Number(e.target.value) || 1) })
+                          }
+                        />
+                      </td>
+                      <td className="px-3 py-2 align-middle">
+                        <input
+                          type="number"
+                          min={1}
+                          max={240}
+                          className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+                          value={row.deadlineOffsetHours}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            const v = Number.isFinite(n) ? Math.min(240, Math.max(1, Math.floor(n))) : 1;
+                            updateDraftRow(index, { deadlineOffsetHours: v });
+                          }}
+                        />
+                      </td>
+                      <td className="px-3 py-2 align-middle">
+                        <select
+                          className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+                          value={row.assigneeId}
+                          onChange={(e) => updateDraftRow(index, { assigneeId: e.target.value })}
+                        >
+                          {data.members.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-1 py-2 align-middle text-center">
+                        <button
+                          type="button"
+                          onClick={() => removeDraftRow(index)}
+                          className="inline-flex rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                          aria-label="删除此行"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
 
         <div className="mb-5 flex justify-center">
           <div className="inline-flex rounded-full border border-line bg-slate-100 p-1">
@@ -90,28 +651,56 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
 
         {view === "list" ? (
           <section className="line-card mb-8 overflow-hidden p-8">
-            <div className="grid grid-cols-[1.1fr_2fr_0.7fr_0.7fr] gap-6 border-b border-line pb-5 text-[22px] font-semibold tracking-tight text-slate-500">
-              <div>任务名称</div>
-              <div>具体内容</div>
-              <div>分配给</div>
-              <div>DDL</div>
+            <div className="grid grid-cols-[1.05fr_1.55fr_0.6fr_0.8fr_0.9fr_0.7fr] items-center gap-6 border-b border-line pb-5 text-center text-[22px] font-semibold tracking-tight text-slate-500">
+              <div className="flex items-center justify-center">任务名称</div>
+              <div className="flex items-center justify-center">具体内容</div>
+              <div className="flex items-center justify-center">工作量</div>
+              <div className="flex items-center justify-center">当前状态</div>
+              <div className="flex items-center justify-center">分配给</div>
+              <div className="flex items-center justify-center">DDL</div>
             </div>
             <div>
               {orderedTasks.map((task) => (
-                <div key={task.id} className="grid grid-cols-[1.1fr_2fr_0.7fr_0.7fr] gap-6 border-b border-line py-7">
-                  <div className={`text-[18px] font-semibold ${statusTone(task)}`}>
-                    {task.title}
-                    {task.warningLevel === "CRITICAL" ? "（已逾期）" : ""}
+                <div key={task.id} className="grid grid-cols-[1.05fr_1.55fr_0.6fr_0.8fr_0.9fr_0.7fr] items-center gap-6 border-b border-line py-7 text-center">
+                  <div className={`flex flex-col items-center justify-center text-[18px] font-semibold ${statusTone(task)}`}>
+                    <div>{normalizeTaskTitle(task.title)}</div>
+                    {task.sourceLabel ? (
+                      <div className="mt-2">
+                        <span className="inline-flex rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700">
+                          {task.sourceLabel}
+                        </span>
+                      </div>
+                    ) : null}
+                    {criticalLabel(task)}
+                    {canReallocateTask(task) ? (
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={() => openReallocateDialog(task.id)}
+                          className="rounded-full border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-50"
+                        >
+                          重新分配
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="text-[16px] text-slate-500">
-                    收集与整理产出，工作量 {task.workloadPoints} 点，当前状态 {task.status.replaceAll("_", " ")}
-                  </div>
-                  <div>
-                    <span className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-line bg-emerald-50 text-lg font-semibold text-emerald-700 shadow-card">
-                      {avatarToken(task.assignee?.name ?? "U")}
+                  <div className="flex items-center justify-center text-[16px] text-slate-500">收集与整理产出</div>
+                  <div className="flex items-center justify-center">
+                    <span className="rounded-full bg-slate-100 px-4 py-2 text-[15px] font-medium text-slate-600">
+                      {task.workloadPoints} 点
                     </span>
                   </div>
-                  <div>
+                  <div className="flex items-center justify-center">
+                    <span className="rounded-full bg-slate-100 px-4 py-2 text-[15px] font-medium text-slate-600">
+                      {task.status.replaceAll("_", " ")}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-center">
+                    <span className="inline-flex min-h-11 min-w-[88px] items-center justify-center rounded-full border border-line bg-emerald-50 px-4 py-2 text-[15px] font-semibold text-emerald-700 shadow-card">
+                      {task.assignee?.name ?? "未分配"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-center">
                     <span className="rounded-full bg-slate-100 px-4 py-2 text-[16px] text-slate-600">
                       {new Date(task.deadline).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}
                     </span>
@@ -122,45 +711,63 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
           </section>
         ) : (
           <section className="line-card mb-8 overflow-hidden p-8">
-            <div className="grid gap-6 lg:grid-cols-[120px_1fr]">
-              <div className="space-y-6 border-r border-line pr-4">
-                {data.members.map((member) => (
-                  <div key={member.id} className="flex items-center gap-3">
-                    <span className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-line bg-slate-50 text-lg font-semibold text-slate-700">
-                      {avatarToken(member.name)}
-                    </span>
-                    <span className="text-xl font-semibold text-slate-700">{member.name}</span>
-                  </div>
+            <div className="grid grid-cols-[132px_1fr] gap-4">
+              <div />
+              <div className="grid grid-cols-7 gap-3 pb-4 text-center text-[15px] font-semibold text-slate-400">
+                {["4.5", "4.6", "4.7", "4.8", "4.9", "4.10", "4.11"].map((day) => (
+                  <div key={day}>{day}</div>
                 ))}
               </div>
-              <div>
-                <div className="grid grid-cols-7 gap-4 pb-6 text-center text-2xl font-medium text-slate-400">
-                  {["4.5", "4.6", "4.7", "4.8", "4.9", "4.10", "4.11"].map((day) => (
-                    <div key={day}>{day}</div>
-                  ))}
-                </div>
-                <div className="relative space-y-6 border-t border-line pt-6">
-                  <div className="pointer-events-none absolute inset-y-0 left-[50%] w-px bg-blue-400" />
-                  {orderedTasks.map((task, index) => (
-                    <div
-                      key={task.id}
-                      className={`w-full rounded-full border px-6 py-4 text-xl font-semibold shadow-card ${
-                        task.warningLevel === "CRITICAL"
-                          ? "border-red-200 text-red-500"
-                          : task.warningLevel === "WARNING"
-                            ? "border-amber-200 text-amber-600"
-                            : "border-emerald-200 text-emerald-600"
-                      }`}
-                      style={{
-                        maxWidth: `${32 + (index % 3) * 16}%`,
-                        marginLeft: `${index % 4 === 0 ? "0%" : `${8 + (index % 4) * 12}%`}`
-                      }}
-                    >
-                      {task.title}
+
+              {data.members.map((member, memberIndex) => {
+                const laneTasks = orderedTasks.filter((task) => task.assignee?.id === member.id);
+                const layouts = buildLaneLayouts(laneTasks);
+                const laneHeight = Math.max(56, layouts.length > 0 ? layouts.length * 42 + 10 : 56);
+
+                return (
+                  <div key={member.id} className="contents">
+                    <div className="flex items-center justify-center border-r border-line pr-4" style={{ minHeight: `${laneHeight}px` }}>
+                      <span className={`inline-flex min-h-9 min-w-[100px] items-center justify-center rounded-full border border-line px-3 py-1.5 text-[13px] font-semibold text-slate-700 ${laneTone(memberIndex)}`}>
+                        {member.name}
+                      </span>
                     </div>
-                  ))}
-                </div>
-              </div>
+                    <div
+                      className={`relative border-t border-line border-b border-slate-100 px-2 ${laneTone(memberIndex)}`}
+                      style={{ minHeight: `${laneHeight}px` }}
+                    >
+                      <div className="pointer-events-none absolute inset-y-0 left-[50%] w-px bg-blue-400" />
+                      {layouts.map(({ task, rowIndex, left, width }) => (
+                        <div
+                          key={task.id}
+                          className={`absolute flex min-h-[34px] items-center rounded-full border px-4 py-2 text-[13px] font-semibold shadow-card ${
+                            task.warningLevel === "CRITICAL"
+                              ? "border-red-200 bg-white/90 text-red-500"
+                              : task.warningLevel === "WARNING"
+                                ? "border-amber-200 bg-white/90 text-amber-600"
+                                : "border-emerald-200 bg-white/90 text-emerald-600"
+                          }`}
+                          style={{
+                            left: `${left}%`,
+                            width: `${width}%`,
+                            top: `${rowIndex * 42 + 8}px`
+                          }}
+                        >
+                          <div className="min-w-0 flex-1 truncate">{normalizeTaskTitle(task.title)}</div>
+                          {canReallocateTask(task) ? (
+                            <button
+                              type="button"
+                              onClick={() => openReallocateDialog(task.id)}
+                              className="ml-3 shrink-0 rounded-full border border-current/30 px-2.5 py-1 text-[11px] font-medium"
+                            >
+                              重新分配
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}
@@ -168,24 +775,41 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
         <section className="line-card p-8">
           <div className="mb-6 flex items-center gap-3 text-[32px] font-semibold tracking-tight">
             <BellRing className="h-8 w-8 text-slate-400" />
-            督促与干预系统公告栏
+            公告栏
           </div>
           <div className="space-y-4">
-            {data.logs.slice(0, 6).map((log, index) => (
-              <div
-                key={log.id}
-                className={`rounded-2xl border px-6 py-5 text-xl ${
-                  index % 2 === 0
-                    ? "border-red-100 bg-red-50 text-red-500"
-                    : "border-emerald-100 bg-emerald-50 text-emerald-600"
-                }`}
-              >
-                {index % 2 === 0 ? "[系统预警]" : "[进度播报]"} {log.description}
-              </div>
-            ))}
+            {visibleLogs.map((log) => {
+              const meta = classifyLog(log.actionType);
+              const content = splitLogDescription(log.description);
+
+              return (
+                <div key={log.id} className={`rounded-2xl border px-6 py-5 ${meta.className}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-sm font-semibold tracking-wide">{meta.label}</div>
+                    <div className="text-sm opacity-80">{formatLogTime(log.createdAt)}</div>
+                  </div>
+                  <div className="mt-2 text-sm opacity-80">相关人：{log.user.name}</div>
+                  <div className="mt-3 text-lg leading-8">{content.main}</div>
+                  {content.penalty ? (
+                    <div className="mt-3 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600">
+                      {content.penalty}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </section>
       </div>
+      <ReallocateDialog
+        open={Boolean(selectedTask)}
+        task={selectedTask}
+        members={data.members}
+        submitting={reallocateLoading}
+        error={reallocateError}
+        onClose={closeReallocateDialog}
+        onConfirm={confirmReallocation}
+      />
     </main>
   );
 }

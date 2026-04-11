@@ -1,16 +1,13 @@
 "use client";
 
-
 import { useState } from "react";
-import Link from "next/link";
 import clsx from "clsx";
-import { ArrowLeft } from "lucide-react";
-
 import { TopNav } from "@/components/top-nav";
+import { ProjectTabs } from "@/components/project-tabs";
 import { ProjectHero } from "@/components/project-hero";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
 
-const METRIC_LABELS = ["功能开发", "缺陷修复", "文档撰写", "代码评审", "团队协作", "交付效率"];
+const METRIC_LABELS = ["Feature", "Bugfix", "Docs", "Review", "Collab", "Delivery"];
 const FALLBACK_NAMES = ["队长", "小明", "小红", "李华", "成员E", "成员F", "成员G", "成员H"];
 
 type RadarProfile = {
@@ -49,14 +46,14 @@ function profileFromMember(
   return {
     id: member.id,
     name: safeName,
-    role: ["前端/UI", "后端/API", "项目协同", "研究支持"][seed % 4],
+    role: ["Frontend/UI", "Backend/API", "PM/Coordination", "Research"][seed % 4],
     totalScore: Math.round(dimensions.reduce((sum, value) => sum + value, 0) / dimensions.length),
     trendPct: Number((((seed % 13) - 4) * 0.6).toFixed(1)),
     dimensions
   };
 }
 
-function points(values: number[], radius: number, center = 140) {
+function points(values: number[], radius: number, center = 120) {
   return values
     .map((value, index) => {
       const angle = (Math.PI * 2 * index) / values.length - Math.PI / 2;
@@ -68,7 +65,7 @@ function points(values: number[], radius: number, center = 140) {
     .join(" ");
 }
 
-function axisPoints(count: number, radius: number, center = 140) {
+function axisPoints(count: number, radius: number, center = 120) {
   return Array.from({ length: count }).map((_, index) => {
     const angle = (Math.PI * 2 * index) / count - Math.PI / 2;
     return {
@@ -81,17 +78,16 @@ function axisPoints(count: number, radius: number, center = 140) {
 function RadarChart({ values, average }: { values: number[]; average: number[] }) {
   const rings = [30, 50, 70, 90];
   const center = 140;
-  const chartRadius = 88;
-  const labelRadius = 118;
+  const chartRadius = 94;
   const axis = axisPoints(values.length, chartRadius, center);
-  const labelPoints = axisPoints(values.length, labelRadius, center);
+  const labelPoints = axisPoints(values.length, chartRadius + 24, center);
 
   return (
     <svg viewBox="0 0 280 280" className="h-56 w-56">
       {rings.map((ring) => (
         <polygon
           key={ring}
-          points={points(Array(values.length).fill(ring), chartRadius, center)}
+          points={points(Array(values.length).fill(ring), chartRadius)}
           fill="none"
           stroke="#d9dee8"
           strokeDasharray="3 5"
@@ -102,16 +98,17 @@ function RadarChart({ values, average }: { values: number[]; average: number[] }
         <line key={index} x1={center} y1={center} x2={line.x} y2={line.y} stroke="#e5e7eb" strokeWidth="1" />
       ))}
       <polygon
-        points={points(average, chartRadius, center)}
+        points={points(average, chartRadius)}
         fill="none"
         stroke="#9ca3af"
         strokeDasharray="4 4"
         strokeWidth="1.5"
       />
-      <polygon points={points(values, chartRadius, center)} fill="rgba(30, 64, 175, 0.15)" stroke="#1d4ed8" strokeWidth="2" />
+      <polygon points={points(values, chartRadius)} fill="rgba(30, 64, 175, 0.15)" stroke="#1d4ed8" strokeWidth="2" />
       {labelPoints.map((item, index) => {
+        const anchor = item.x > center + 8 ? "start" : item.x < center - 8 ? "end" : "middle";
         const baseline = item.y > center + 14 ? "hanging" : item.y < center - 14 ? "auto" : "middle";
-        const yOffset = item.y > center + 14 ? 4 : item.y < center - 14 ? -4 : 0;
+        const yOffset = item.y > center + 14 ? 3 : item.y < center - 14 ? -3 : 0;
 
         return (
           <text
@@ -119,11 +116,11 @@ function RadarChart({ values, average }: { values: number[]; average: number[] }
             x={item.x}
             y={item.y + yOffset}
             fill="#475569"
-            fontSize="12"
-            textAnchor="middle"
+            fontSize="11"
+            textAnchor={anchor}
             dominantBaseline={baseline}
           >
-            {METRIC_LABELS[index]}
+          {METRIC_LABELS[index]}
           </text>
         );
       })}
@@ -165,18 +162,10 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
       <div className="shell py-6">
         <ProjectHero
           project={data.project}
-          title="协作平台成员贡献统计"
+          title="协作平台会员贡献统计"
           subtitle="聚焦成员贡献排名与维度能力，帮助团队快速识别长板和短板。"
         />
-        <div className="mb-6">
-          <Link
-            href={`/project/${projectId}`}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            返回主界面
-          </Link>
-        </div>
+        <ProjectTabs projectId={projectId} />
 
         <section className="mb-6 rounded-2xl bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
           <div className="grid gap-3 text-sm md:grid-cols-4">
@@ -261,29 +250,6 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
                   </div>
                   <div className="flex justify-center">
                     <RadarChart values={profile.dimensions} average={teamAverage} />
-                  </div>
-                  <div className="mt-3 border-t border-slate-100 pt-3">
-                    <div className="mb-2 text-xs font-medium text-slate-500">维度分数</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {METRIC_LABELS.map((label, dimIdx) => {
-                        const score = profile.dimensions[dimIdx];
-                        const avg = teamAverage[dimIdx];
-                        const diff = score - avg;
-                        return (
-                          <div key={`${profile.id}-${label}`} className="rounded-lg bg-slate-50 px-2 py-1.5 text-xs">
-                            <div className="text-slate-600">{label}</div>
-                            <div className="mt-0.5 flex items-center justify-between">
-                              <span className="font-semibold text-slate-900">{score}</span>
-                              <span className={clsx(diff >= 0 ? "text-blue-700" : "text-red-500")}>
-                                {diff >= 0 ? "+" : ""}
-                                {diff}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-2 text-[11px] text-slate-400">右侧差值为相对团队平均分</div>
                   </div>
                 </div>
               ))}

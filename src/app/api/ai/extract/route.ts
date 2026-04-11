@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
 import pdfParse from "pdf-parse";
+import { createOpenAIClient } from "@/lib/openai-client";
+
+export const maxDuration = 300;
 
 const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
@@ -12,29 +14,25 @@ async function extractFromImage(file: File): Promise<string> {
   const bytes = Buffer.from(await file.arrayBuffer());
   const base64 = bytes.toString("base64");
   const mime = file.type || "image/png";
+  const visionModel = process.env.OPENAI_VISION_MODEL?.trim() || model;
 
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const res = await client.responses.create({
-    model,
-    input: [
+  const client = createOpenAIClient();
+  const res = await client.chat.completions.create({
+    model: visionModel,
+    messages: [
       {
         role: "user",
         content: [
-          {
-            type: "input_text",
-            text: "Extract all meaningful text from this image. Return plain text only."
-          },
-          {
-            type: "input_image",
-            image_url: `data:${mime};base64,${base64}`,
-            detail: "auto"
-          }
+          { type: "text", text: "Extract all meaningful text from this image. Return plain text only." },
+          { type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } }
         ]
       }
-    ]
+    ],
+    temperature: 0.2,
+    max_tokens: 4096
   });
 
-  return res.output_text || "";
+  return res.choices[0]?.message?.content?.trim() || "";
 }
 
 export async function POST(request: Request) {
@@ -47,6 +45,7 @@ export async function POST(request: Request) {
     }
 
     const type = file.type;
+    const lowerName = file.name.toLowerCase();
     let text = "";
 
     if (type === "text/plain" || type === "text/markdown") {
@@ -57,6 +56,12 @@ export async function POST(request: Request) {
       text = parsed.text;
     } else if (type.startsWith("image/")) {
       text = await extractFromImage(file);
+    } else if (!type || type === "application/octet-stream") {
+      if (lowerName.endsWith(".txt") || lowerName.endsWith(".md")) {
+        text = await file.text();
+      } else {
+        return NextResponse.json({ error: "Unsupported file type" }, { status: 400 });
+      }
     } else {
       return NextResponse.json({ error: "Unsupported file type" }, { status: 400 });
     }
