@@ -13,6 +13,7 @@ import { MemberWorkloadStrip } from "@/components/member-workload-strip";
 import { WorkloadShareBar } from "@/components/workload-share-bar";
 import { memberWorkloadPoints } from "@/lib/member-workload";
 import { TaskBoard } from "@/components/task-board";
+import { ProjectAiChatPanel } from "@/components/project-ai-chat-panel";
 import type { TaskStatus } from "@/lib/domain";
 import { DashboardData, DashboardTask } from "@/lib/types";
 
@@ -1130,6 +1131,12 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
         error={reallocateError}
         onClose={closeReallocateDialog}
         onConfirm={confirmReallocation}
+      />
+
+      <ProjectAiChatPanel
+        projectId={projectId}
+        disabled={data.isGuest || !data.me}
+        currentUserName={data.me?.name}
       />
     </main>
   );

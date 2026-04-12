@@ -9,6 +9,7 @@ import { ArrowLeft } from "lucide-react";
 import { TopNav } from "@/components/top-nav";
 import { ProjectHero } from "@/components/project-hero";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
+import { ProjectAiChatPanel } from "@/components/project-ai-chat-panel";
 import { ANALYTICS_METRIC_LABELS, buildAnalyticsProfiles } from "@/lib/analytics-metrics";
 
 const FALLBACK_NAMES = ["队长", "小明", "小红", "李华", "成员E", "成员F", "成员G", "成员H"];
@@ -291,6 +292,12 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
           </section>
         ) : null}
       </div>
+
+      <ProjectAiChatPanel
+        projectId={projectId}
+        disabled={data.isGuest || !data.me}
+        currentUserName={data.me?.name}
+      />
     </main>
   );
 }

@@ -18,6 +18,7 @@ import { formatMilestoneDueDisplay } from "@/lib/assignment-milestones";
 import { LEGACY_AUTO_DOC_TITLES } from "@/lib/project-documents";
 import { memberWorkloadPoints } from "@/lib/member-workload";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
+import { ProjectAiChatPanel } from "@/components/project-ai-chat-panel";
 
 type Props = {
   projectId: string;
@@ -351,6 +352,12 @@ export function ProjectDashboard({ projectId }: Props) {
           </section>
         </div>
       </div>
+
+      <ProjectAiChatPanel
+        projectId={projectId}
+        disabled={data.isGuest || !data.me}
+        currentUserName={data.me?.name}
+      />
     </main>
   );
 }
