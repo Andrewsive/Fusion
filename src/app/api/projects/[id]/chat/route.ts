@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireProjectMember } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { createOpenAIClient } from "@/lib/openai-client";
+import { getLlmMissingConfigMessage, isLlmConfigured, streamProjectChat } from "@/lib/llm-router";
 import { buildProjectSnapshotForAi } from "@/lib/project-ai-context";
+import { humanizeRelayError } from "@/lib/relay-error-message";
 
 export const maxDuration = 120;
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const MAX_USER_CHARS = 8_000;
 const HISTORY_WINDOW = 48;
 
@@ -45,8 +45,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { id: projectId } = await params;
     const userId = await requireProjectMember(projectId);
 
-    if (!process.env.OPENAI_API_KEY?.trim()) {
-      return NextResponse.json({ error: "未配置 OPENAI_API_KEY，无法使用 AI 对话。" }, { status: 503 });
+    if (!isLlmConfigured()) {
+      return NextResponse.json({ error: getLlmMissingConfigMessage() }, { status: 503 });
     }
 
     let body: unknown;
@@ -89,24 +89,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       "【项目快照】\n" +
       snapshot;
 
-    const openaiMessages: { role: "user" | "assistant" | "system"; content: string }[] = [
-      { role: "system", content: system },
-      ...history
-        .filter((m) => m.role === "USER" || m.role === "ASSISTANT")
-        .map((m) => ({
-          role: m.role === "USER" ? ("user" as const) : ("assistant" as const),
-          content: m.content
-        }))
-    ];
-
-    const client = createOpenAIClient();
-    const stream = await client.chat.completions.create({
-      model: MODEL,
-      messages: openaiMessages,
-      temperature: 0.45,
-      max_tokens: 2_048,
-      stream: true
-    });
+    const turns = history
+      .filter((m) => m.role === "USER" || m.role === "ASSISTANT")
+      .map((m) => ({
+        role: m.role === "USER" ? ("user" as const) : ("assistant" as const),
+        content: m.content
+      }));
 
     const encoder = new TextEncoder();
     let fullAssistant = "";
@@ -114,16 +102,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const readable = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          for await (const chunk of stream) {
-            const piece = chunk.choices[0]?.delta?.content ?? "";
-            if (piece) {
-              fullAssistant += piece;
-              controller.enqueue(encoder.encode(piece));
-            }
+          for await (const piece of streamProjectChat(system, turns)) {
+            fullAssistant += piece;
+            controller.enqueue(encoder.encode(piece));
           }
         } catch (err) {
           console.error("project chat stream", err);
-          const fallback = "\n\n[回复中断：网络或服务异常，请重试。]";
+          const hint = humanizeRelayError(err);
+          const fallback = `\n\n[回复中断：${hint}]`;
           fullAssistant += fallback;
           controller.enqueue(encoder.encode(fallback));
         } finally {

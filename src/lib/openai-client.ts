@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { getOpenAiCompatApiKey, getOpenAiCompatBaseUrl } from "@/lib/llm-config";
 
 const THIRTY_MIN_MS = 30 * 60 * 1000;
 
@@ -23,19 +24,29 @@ function resolveLongTimeoutMs(): number {
   return Math.min(Math.floor(n), THIRTY_MIN_MS);
 }
 
+function compatKeyOrThrow(): string {
+  const key = getOpenAiCompatApiKey();
+  if (!key) {
+    throw new Error("OpenAI-compatible API key missing (GEMINI_API_KEY+GEMINI_OPENAI_BASE_URL or OPENAI_API_KEY)");
+  }
+  return key;
+}
+
 export function createOpenAIClient(): OpenAI {
   const timeout = resolveTimeoutMs();
+  const baseURL = getOpenAiCompatBaseUrl();
   return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseURL: process.env.OPENAI_BASE_URL?.trim() || undefined,
+    apiKey: compatKeyOrThrow(),
+    ...(baseURL ? { baseURL } : {}),
     ...(timeout !== undefined ? { timeout } : {})
   });
 }
 
 export function createOpenAILongRunningClient(): OpenAI {
+  const baseURL = getOpenAiCompatBaseUrl();
   return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseURL: process.env.OPENAI_BASE_URL?.trim() || undefined,
+    apiKey: compatKeyOrThrow(),
+    ...(baseURL ? { baseURL } : {}),
     timeout: resolveLongTimeoutMs()
   });
 }

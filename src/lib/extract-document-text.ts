@@ -1,10 +1,9 @@
 import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
-import { createOpenAILongRunningClient } from "@/lib/openai-client";
+import { assertLlmConfigured } from "@/lib/llm-config";
+import { visionExtractPlainText } from "@/lib/llm-router";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-
-const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 function stripHtml(html: string): string {
   return html
@@ -30,39 +29,20 @@ function tooShortMessage(kind: "pdf" | "docx" | "image" | "other"): string {
   }
   if (kind === "image") {
     return (
-      "从图片中识别到的文字过少。请换更清晰、正对光线的照片，或改用电子版 PDF/Word；并确认已在环境变量中配置 OPENAI_API_KEY（图片识别走视觉模型）。"
+      "从图片中识别到的文字过少。请换更清晰、正对光线的照片，或改用电子版 PDF/Word；若使用硅基流动等 OpenAI 兼容接口，请在 .env 配置 OPENAI_VISION_MODEL（如 Qwen2-VL-7B）。"
     );
   }
   return "从文件中读到的文字过少，无法交给 AI 解析。请换用含可复制文字的格式。";
 }
 
 async function extractFromImage(file: File): Promise<string> {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is not configured");
-  }
+  assertLlmConfigured();
 
   const bytes = Buffer.from(await file.arrayBuffer());
   const base64 = bytes.toString("base64");
   const mime = file.type || "image/png";
-  const visionModel = process.env.OPENAI_VISION_MODEL?.trim() || model;
 
-  const client = createOpenAILongRunningClient();
-  const res = await client.chat.completions.create({
-    model: visionModel,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "Extract all meaningful text from this image. Return plain text only." },
-          { type: "image_url", image_url: { url: `data:${mime};base64,${base64}` } }
-        ]
-      }
-    ],
-    temperature: 0.2,
-    max_tokens: 4096
-  });
-
-  return res.choices[0]?.message?.content?.trim() || "";
+  return visionExtractPlainText(mime, base64);
 }
 
 /**

@@ -532,7 +532,7 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
             <div>
               <h2 className="text-lg font-semibold tracking-tight text-slate-900">AI 团队进度简报</h2>
               <p className="mt-1 text-xs text-muted">
-                根据任务状态与操作记录自动生成，供全员查看；状态更新后约 2 秒会尝试刷新（需配置 OPENAI_API_KEY）。
+                根据任务状态与操作记录自动生成，供全员查看；状态更新后约 2 秒会尝试刷新（需配置 GEMINI_API_KEY 或 OPENAI_API_KEY）。
               </p>
             </div>
             {data.me && !data.isGuest ? (
