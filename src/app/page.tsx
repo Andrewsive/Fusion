@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Camera } from "lucide-react";
+import { InviteQrScanner } from "@/components/invite-qr-scanner";
 
 type JoinMode = "id" | "invite";
 
@@ -47,6 +49,7 @@ export default function HomePage() {
   const [myProjects, setMyProjects] = useState<MyProjectRow[]>([]);
   const [myProjectsLoading, setMyProjectsLoading] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [inviteScanOpen, setInviteScanOpen] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
@@ -355,12 +358,27 @@ export default function HomePage() {
                 </div>
                 <div className="mt-5 flex flex-1 flex-col space-y-4">
                   {joinMode === "invite" ? (
-                    <input
-                      className={ui.field}
-                      value={joinInviteCode}
-                      onChange={(e) => setJoinInviteCode(e.target.value)}
-                      placeholder="邀请码"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        className={`${ui.field} min-w-0 flex-1`}
+                        value={joinInviteCode}
+                        onChange={(e) => setJoinInviteCode(e.target.value)}
+                        placeholder="邀请码或扫码填入"
+                        autoComplete="off"
+                      />
+                      <button
+                        type="button"
+                        title="扫描邀请二维码"
+                        onClick={() => {
+                          setError(null);
+                          setInviteScanOpen(true);
+                        }}
+                        className={`${ui.btnGhost} shrink-0 gap-1.5 px-3`}
+                      >
+                        <Camera className="h-4 w-4" aria-hidden />
+                        <span className="hidden sm:inline">扫码</span>
+                      </button>
+                    </div>
                   ) : (
                     <input
                       className={`${ui.field} font-mono text-[13px]`}
@@ -375,6 +393,15 @@ export default function HomePage() {
                 </button>
               </section>
             </div>
+
+            <InviteQrScanner
+              open={inviteScanOpen}
+              onClose={() => setInviteScanOpen(false)}
+              onDecoded={(code) => {
+                setJoinInviteCode(code);
+                setError(null);
+              }}
+            />
           </>
         ) : null}
       </div>

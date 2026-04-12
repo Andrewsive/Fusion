@@ -29,7 +29,7 @@ export function ProjectInviteShare({ inviteCode }: Props) {
     }
     let cancelled = false;
     void QRCode.toDataURL(joinUrl, {
-      width: 200,
+      width: 280,
       margin: 2,
       color: { dark: "#0f172a", light: "#ffffff" }
     }).then((url) => {
@@ -50,6 +50,16 @@ export function ProjectInviteShare({ inviteCode }: Props) {
       setCopied(false);
     }
   }, [joinUrl]);
+
+  const saveQrImage = useCallback(() => {
+    if (!qrDataUrl) return;
+    const safe = inviteCode.trim().replace(/[^\w.-]+/g, "_") || "invite";
+    const a = document.createElement("a");
+    a.href = qrDataUrl;
+    a.download = `Fusion邀请二维码-${safe}.png`;
+    a.rel = "noopener";
+    a.click();
+  }, [qrDataUrl, inviteCode]);
 
   return (
     <>
@@ -88,23 +98,33 @@ export function ProjectInviteShare({ inviteCode }: Props) {
             <h2 id={`${dialogId}-title`} className="text-lg font-semibold text-ink">
               扫码加入项目
             </h2>
-            <p className="mt-2 text-sm text-muted">用手机扫描后打开首页，邀请码已预填，可直接加入。</p>
+            <p className="mt-2 text-sm text-muted">
+              扫码打开首页后邀请码会预填；已登录用户也可在「加入项目」→「邀请码」旁点击「扫码」直接识别本二维码。
+            </p>
             <div className="mt-4 flex justify-center rounded-xl border border-line bg-slate-50 p-4">
               {qrDataUrl ? (
                 <Image
                   src={qrDataUrl}
-                  width={200}
-                  height={200}
+                  width={280}
+                  height={280}
                   alt="邀请链接二维码"
                   unoptimized
-                  className="h-[200px] w-[200px]"
+                  className="h-[280px] w-[280px]"
                 />
               ) : (
-                <div className="flex h-[200px] w-[200px] items-center justify-center text-sm text-muted">生成中…</div>
+                <div className="flex h-[280px] w-[280px] items-center justify-center text-sm text-muted">生成中…</div>
               )}
             </div>
             <p className="mt-3 break-all font-mono text-xs text-muted">{joinUrl}</p>
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                disabled={!qrDataUrl}
+                onClick={() => saveQrImage()}
+                className="rounded-full border border-line px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                保存图片
+              </button>
               <button
                 type="button"
                 onClick={() => void copyLink()}
