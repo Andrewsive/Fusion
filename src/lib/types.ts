@@ -1,3 +1,4 @@
+import type { AssignmentMilestone } from "@/lib/assignment-milestones";
 import { TaskStatus, WarningLevel } from "@/lib/domain";
 
 export type DashboardTask = {
@@ -31,6 +32,7 @@ export type DashboardData = {
     title: string;
     contextSummary: string;
     keyDeliverables?: string[] | null;
+    assignmentMilestones?: AssignmentMilestone[] | null;
     deadline: string;
     inviteCode: string;
   };

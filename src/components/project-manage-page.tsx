@@ -8,6 +8,8 @@ import { ProjectHero } from "@/components/project-hero";
 import { ReallocateDialog } from "@/components/reallocate-dialog";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
 import { buildDraftFromSuggested, type TaskDraftRow } from "@/lib/task-draft";
+import { formatMilestoneDueDisplay } from "@/lib/assignment-milestones";
+import { WorkloadShareBar } from "@/components/workload-share-bar";
 import { DashboardData, DashboardTask } from "@/lib/types";
 
 function statusTone(task: DashboardTask) {
@@ -173,7 +175,7 @@ function dedupeLogs(logs: DashboardData["logs"]) {
 }
 
 const ACCEPT_UPLOAD =
-  ".pdf,.txt,.md,text/plain,text/markdown,application/pdf,image/png,image/jpeg,image/webp,image/gif";
+  ".pdf,.docx,.html,.htm,.txt,.md,.markdown,.mdown,.mkd,text/plain,text/markdown,text/x-markdown,text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif";
 
 export function ProjectManagePage({ projectId }: { projectId: string }) {
   const { data, error, refresh } = useProjectDashboard(projectId);
@@ -209,7 +211,9 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
         }
         const text = String(extractPayload.text ?? "").trim();
         if (text.length < 10) {
-          throw new Error("未能从文件中提取足够文本，请尝试更清晰的 PDF、纯文本或图片。");
+          throw new Error(
+            "未能从文件中提取足够文本，请尝试更清晰的 PDF、Word（.docx）、Markdown/HTML、纯文本或图片（含 HEIC）。"
+          );
         }
 
         setUploadPhase("parsing");
@@ -349,6 +353,20 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
 
   const deliverables =
     data.project.keyDeliverables?.filter((x) => typeof x === "string" && x.trim().length > 0) ?? [];
+  const milestones = data.project.assignmentMilestones ?? [];
+
+  const taskListWorkloadTotal = orderedTasks.reduce((s, t) => s + t.workloadPoints, 0);
+
+  const draftWorkloadItems = (draftTasks ?? []).map((row) => ({
+    label: row.title.trim() || "未命名任务",
+    points: row.workloadPoints
+  }));
+
+  const listWorkloadItems = orderedTasks.map((t) => ({
+    label: normalizeTaskTitle(t.title),
+    points: t.workloadPoints
+  }));
+
   const visibleLogs = dedupeLogs(data.logs).slice(0, 6);
   const busy = uploadPhase !== "idle";
   const canCommitDraft = data.isOwner && Boolean(draftTasks?.length) && !commitLoading && !busy;
@@ -459,7 +477,7 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
               </div>
               <div className="mt-6 text-3xl font-semibold tracking-tight">上传作业要求文档</div>
               <p className="mt-3 text-sm text-muted">
-                支持 PDF、图片和文本；点击或拖拽文件到此处，将自动提取文本并由 AI 解析全文（含建议任务）。
+                支持 PDF、Word（.docx）、Markdown、HTML、纯文本与常见图片（含 HEIC）；点击或拖拽到此处，将自动提取文本并由 AI 解析（含时间节点与建议任务）。
               </p>
               {!data.isOwner ? (
                 <p className="mt-4 text-sm font-medium text-amber-700">仅组长可在此上传并生成任务草稿。</p>
@@ -521,6 +539,19 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
                   <p className="text-sm text-muted">上传左侧文档后，将在此显示模型识别出的交付物标签。</p>
                 ) : null}
               </div>
+              {milestones.length > 0 ? (
+                <div className="mt-5 border-t border-line pt-5">
+                  <p className="text-sm font-medium text-slate-700">关键时间节点（AI）</p>
+                  <ul className="mt-2 space-y-2 text-sm">
+                    {milestones.map((m, i) => (
+                      <li key={`${i}-${m.label}`} className="flex flex-wrap gap-x-2 gap-y-0.5">
+                        <span className="font-medium text-slate-800">{m.label}</span>
+                        <span className="text-muted">{formatMilestoneDueDisplay(m)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
           </div>
         </section>
@@ -531,7 +562,8 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
               <div>
                 <h2 className="text-xl font-semibold tracking-tight">任务草稿（未写入数据库）</h2>
                 <p className="mt-1 text-sm text-muted">
-                  刷新页面会丢失。确认后会作为新一批任务写入项目列表；相对截止会换算为具体日期（不超过项目截止）。
+                  刷新页面会丢失。AI 建议为<strong className="font-medium text-slate-800"> 100 点制</strong>
+                  工作量（可改）；确认后写入任务列表，相对截止会换算为具体日期（不超过项目截止）。
                 </p>
               </div>
               <button
@@ -627,6 +659,9 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
                 </tbody>
               </table>
             </div>
+            <div className="mt-4">
+              <WorkloadShareBar items={draftWorkloadItems} title="草稿：工作量权重分布" />
+            </div>
           </section>
         ) : null}
 
@@ -651,6 +686,14 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
 
         {view === "list" ? (
           <section className="line-card mb-8 overflow-hidden p-8">
+            {listWorkloadItems.length > 0 ? (
+              <div className="mb-6">
+                <WorkloadShareBar
+                  items={listWorkloadItems}
+                  title={taskListWorkloadTotal === 100 ? "当前列表：工作量权重（100 点制）" : "当前列表：工作量权重分布"}
+                />
+              </div>
+            ) : null}
             <div className="grid grid-cols-[1.05fr_1.55fr_0.6fr_0.8fr_0.9fr_0.7fr] items-center gap-6 border-b border-line pb-5 text-center text-[22px] font-semibold tracking-tight text-slate-500">
               <div className="flex items-center justify-center">任务名称</div>
               <div className="flex items-center justify-center">具体内容</div>
@@ -684,7 +727,18 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
                       </div>
                     ) : null}
                   </div>
-                  <div className="flex items-center justify-center text-[16px] text-slate-500">收集与整理产出</div>
+                  <div className="flex flex-col items-center justify-center gap-1 text-[14px] text-slate-500">
+                    <span>
+                      占团队任务总量{" "}
+                      <span className="font-semibold text-slate-700">
+                        {taskListWorkloadTotal > 0
+                          ? ((task.workloadPoints / taskListWorkloadTotal) * 100).toFixed(1)
+                          : "0"}
+                        %
+                      </span>
+                    </span>
+                    <span className="text-xs text-muted">相对权重，可结合上方彩条查看</span>
+                  </div>
                   <div className="flex items-center justify-center">
                     <span className="rounded-full bg-slate-100 px-4 py-2 text-[15px] font-medium text-slate-600">
                       {task.workloadPoints} 点

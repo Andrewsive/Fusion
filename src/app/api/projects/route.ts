@@ -21,23 +21,26 @@ export async function POST(request: NextRequest) {
   try {
     const body = createProjectSchema.parse(await request.json());
     const sessionUserId = await getCurrentUserId();
+    if (!sessionUserId) {
+      return NextResponse.json({ error: "请先登录后再创建项目" }, { status: 401 });
+    }
+
+    const account = await prisma.user.findUnique({ where: { id: sessionUserId } });
+    if (!account?.email?.trim() || !account.passwordHash) {
+      return NextResponse.json(
+        {
+          error:
+            "创建项目需使用已注册账号。请先注册或登录；若当前仅为匿名加入身份，请先退出匿名会话后再登录。"
+        },
+        { status: 403 }
+      );
+    }
 
     const result = await prisma.$transaction(async (tx) => {
-      let owner;
-      if (sessionUserId) {
-        const existing = await tx.user.findUnique({ where: { id: sessionUserId } });
-        if (!existing) {
-          throw new Error("登录已失效，请重新登录");
-        }
-        owner = await tx.user.update({
-          where: { id: sessionUserId },
-          data: { name: body.ownerName.trim() }
-        });
-      } else {
-        owner = await tx.user.create({
-          data: { name: body.ownerName.trim() }
-        });
-      }
+      const owner = await tx.user.update({
+        where: { id: sessionUserId },
+        data: { name: body.ownerName.trim() }
+      });
 
       const project = await tx.project.create({
         data: {

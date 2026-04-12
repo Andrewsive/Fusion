@@ -4,6 +4,7 @@ import { getWarningLevel } from "@/lib/warning";
 import { requireProjectMember } from "@/lib/auth";
 import { ensureDefaultProjectDocuments } from "@/lib/project-documents";
 import { toPublicUser } from "@/lib/user-serialize";
+import { parseAssignmentMilestones, sortMilestonesByDue } from "@/lib/assignment-milestones";
 
 function parseKeyDeliverables(raw: string | null | undefined): string[] | null {
   if (!raw) return null;
@@ -79,7 +80,12 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     const isOwner = myMembership?.role === "OWNER";
     const isGuest = meId === null;
 
-    const { keyDeliverables: rawDeliverables, ...projectRest } = project;
+    const { keyDeliverables: rawDeliverables, assignmentMilestones: rawMilestones, ...projectRest } = project;
+
+    const milestonesSorted = (() => {
+      const list = parseAssignmentMilestones(rawMilestones);
+      return list ? sortMilestonesByDue(list) : null;
+    })();
 
     const publicMembers = members.map((m) => toPublicUser(m.user));
     const publicMe = me ? toPublicUser(me, { includeEmail: true }) : null;
@@ -97,7 +103,8 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       isOwner,
       project: {
         ...projectRest,
-        keyDeliverables: parseKeyDeliverables(rawDeliverables)
+        keyDeliverables: parseKeyDeliverables(rawDeliverables),
+        assignmentMilestones: milestonesSorted
       },
       me: publicMe,
       members: publicMembers,

@@ -1,10 +1,26 @@
 import { NextResponse } from "next/server";
+import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 import { createOpenAIClient } from "@/lib/openai-client";
+
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 export const maxDuration = 300;
 
 const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isMarkdownName(lowerName: string): boolean {
+  return /\.(md|markdown|mdown|mkd)$/i.test(lowerName);
+}
 
 async function extractFromImage(file: File): Promise<string> {
   if (!process.env.OPENAI_API_KEY) {
@@ -44,21 +60,44 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "File is required" }, { status: 400 });
     }
 
-    const type = file.type;
+    const type = file.type || "";
     const lowerName = file.name.toLowerCase();
     let text = "";
 
-    if (type === "text/plain" || type === "text/markdown") {
-      text = await file.text();
+    const markdownMime =
+      type === "text/markdown" ||
+      type === "text/x-markdown" ||
+      type.startsWith("text/markdown;") ||
+      type.startsWith("text/x-markdown;");
+
+    if (type.startsWith("image/")) {
+      text = await extractFromImage(file);
     } else if (type === "application/pdf") {
       const buffer = Buffer.from(await file.arrayBuffer());
       const parsed = await pdfParse(buffer);
       text = parsed.text;
-    } else if (type.startsWith("image/")) {
-      text = await extractFromImage(file);
+    } else if (type === DOCX_MIME || lowerName.endsWith(".docx")) {
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const result = await mammoth.extractRawText({ buffer });
+      text = result.value;
+    } else if (type === "text/plain" || markdownMime || isMarkdownName(lowerName)) {
+      text = await file.text();
+    } else if (type === "text/html" || lowerName.endsWith(".html") || lowerName.endsWith(".htm")) {
+      const raw = await file.text();
+      text = stripHtml(raw);
     } else if (!type || type === "application/octet-stream") {
-      if (lowerName.endsWith(".txt") || lowerName.endsWith(".md")) {
+      if (lowerName.endsWith(".txt") || isMarkdownName(lowerName)) {
         text = await file.text();
+      } else if (lowerName.endsWith(".html") || lowerName.endsWith(".htm")) {
+        text = stripHtml(await file.text());
+      } else if (lowerName.endsWith(".pdf")) {
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const parsed = await pdfParse(buffer);
+        text = parsed.text;
+      } else if (lowerName.endsWith(".docx")) {
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const result = await mammoth.extractRawText({ buffer });
+        text = result.value;
       } else {
         return NextResponse.json({ error: "Unsupported file type" }, { status: 400 });
       }

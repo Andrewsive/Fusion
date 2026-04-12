@@ -28,8 +28,23 @@ export default function HomePage() {
       .finally(() => setAuthReady(true));
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const code = new URLSearchParams(window.location.search).get("invite")?.trim();
+    if (code) {
+      setJoinInviteCode(code);
+      setJoinMode("invite");
+    }
+  }, []);
+
+  const isRegistered = Boolean(sessionUser?.email);
+
   async function createProject() {
     setError(null);
+    if (!isRegistered) {
+      setError("创建项目需先注册并登录。匿名身份仅用于加入他人项目。");
+      return;
+    }
     const t = title.trim();
     if (t.length < 2) {
       setError("请填写项目名称（至少 2 个字）");
@@ -130,10 +145,10 @@ export default function HomePage() {
           </p>
           {!authReady ? (
             <span className="text-muted">登录状态加载中…</span>
-          ) : sessionUser ? (
+          ) : sessionUser && isRegistered ? (
             <span className="text-ink">
               <span className="font-medium">{sessionUser.name}</span>
-              {sessionUser.email ? <span className="ml-1 text-muted">({sessionUser.email})</span> : null}
+              <span className="ml-1 text-muted">({sessionUser.email})</span>
               <span className="mx-2 text-muted">·</span>
               <button
                 type="button"
@@ -142,6 +157,23 @@ export default function HomePage() {
               >
                 退出
               </button>
+            </span>
+          ) : sessionUser ? (
+            <span className="max-w-md text-right text-ink">
+              <span className="font-medium">{sessionUser.name}</span>
+              <span className="ml-1 text-muted">（匿名，未注册）</span>
+              <span className="mx-2 text-muted">·</span>
+              <button
+                type="button"
+                className="font-medium text-ink underline decoration-line hover:opacity-80"
+                onClick={() => void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.reload())}
+              >
+                清除本机身份
+              </button>
+              <span className="mx-2 text-muted">·</span>
+              <Link href="/register" className="font-medium text-ink underline decoration-line hover:opacity-80">
+                注册
+              </Link>
             </span>
           ) : (
             <div className="flex items-center gap-3 font-medium text-ink">
@@ -156,10 +188,20 @@ export default function HomePage() {
         </div>
       </div>
 
+      {error ? (
+        <div className="shell mx-auto max-w-5xl pb-3">
+          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>
+        </div>
+      ) : null}
+
       <div className="shell mx-auto grid max-w-5xl gap-6 pb-8 md:grid-cols-2">
         <section className="line-card p-6">
           <h1 className="text-3xl font-semibold tracking-tight">Fusion Space MVP</h1>
-          <p className="mt-2 text-sm text-muted">创建一个新项目空间；你将成为队长，并可邀请成员、使用 AI 拆解任务与协作看板。</p>
+          <p className="mt-2 text-sm text-muted">
+            创建项目后你将成为队长，并可邀请成员、使用 AI 拆解任务与协作看板。
+            <strong className="font-medium text-ink"> 必须先注册并登录</strong>
+            ，系统不再为未登录访客自动创建「队长」账号。
+          </p>
 
           <div className="mt-4 space-y-3">
             <input
@@ -186,15 +228,35 @@ export default function HomePage() {
             />
           </div>
 
-          <button type="button" onClick={createProject} className="mt-4 rounded-full border border-ink bg-ink px-4 py-2 text-sm font-medium text-white">
+          <button
+            type="button"
+            onClick={createProject}
+            disabled={!isRegistered}
+            className="mt-4 rounded-full border border-ink bg-ink px-4 py-2 text-sm font-medium text-white enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
             创建项目
           </button>
+          {!authReady ? null : !isRegistered ? (
+            <p className="mt-2 text-sm text-muted">
+              当前未处于已注册登录状态，无法创建项目。请先
+              <Link href="/login" className="mx-1 font-medium text-ink underline decoration-line">
+                登录
+              </Link>
+              或
+              <Link href="/register" className="mx-1 font-medium text-ink underline decoration-line">
+                注册
+              </Link>
+              ；若浏览器里残留匿名身份，可先点右上角「清除本机身份」。
+            </p>
+          ) : null}
         </section>
 
         <section className="line-card p-6">
           <h2 className="text-2xl font-semibold tracking-tight">加入项目</h2>
           <p className="mt-2 text-sm text-muted">
-            此处<strong>不会</strong>列出任何现成项目。你必须向队长索取<strong>邀请码</strong>或<strong>项目 ID</strong>（对方在创建项目后可见），再在此输入。未登录时需填写你的昵称；已登录可免填昵称。
+            此处<strong>不会</strong>列出任何现成项目。你必须向队长索取<strong>邀请码</strong>或<strong>项目 ID</strong>（对方在创建项目后可见），再在此输入；若队长分享的是链接（含{" "}
+            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs">?invite=邀请码</code>
+            ），打开后邀请码会自动填入。若无本机会话需填写昵称；已有会话（含匿名加入）可免填昵称。
           </p>
 
           <div className="mt-4 flex gap-2 rounded-xl border border-line bg-slate-50 p-1">
@@ -231,7 +293,9 @@ export default function HomePage() {
               />
             )}
             {sessionUser ? (
-              <p className="text-sm text-muted">已登录，加入时无需填写昵称。</p>
+              <p className="text-sm text-muted">
+                {isRegistered ? "已登录，加入时无需填写昵称。" : "当前为匿名身份，加入时无需填写昵称。"}
+              </p>
             ) : (
               <input
                 className="w-full rounded-xl border border-line px-3 py-2"
@@ -249,8 +313,6 @@ export default function HomePage() {
           >
             加入项目
           </button>
-
-          {error ? <p className="mt-4 text-sm text-critical">{error}</p> : null}
         </section>
       </div>
     </main>

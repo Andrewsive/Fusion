@@ -62,7 +62,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         where: { id },
         data: {
           contextSummary: ai.contextSummary,
-          keyDeliverables: JSON.stringify(ai.keyDeliverables)
+          keyDeliverables: JSON.stringify(ai.keyDeliverables),
+          assignmentMilestones: JSON.stringify(ai.milestones)
         }
       });
 

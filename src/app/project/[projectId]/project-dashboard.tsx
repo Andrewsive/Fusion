@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FilePlus2, FileText, FolderOpen, PencilLine, Trash2, Users2 } from "lucide-react";
 import { TopNav } from "@/components/top-nav";
 import { ProjectHero } from "@/components/project-hero";
+import { formatMilestoneDueDisplay } from "@/lib/assignment-milestones";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
 import type { DashboardDocument } from "@/lib/types";
 
@@ -173,11 +174,7 @@ export function ProjectDashboard({ projectId }: Props) {
           </div>
         ) : null}
 
-        <ProjectHero
-          project={data.project}
-          title={data.project.title}
-          subtitle="左侧查看共享信息与文档资产，右侧用于显示和编辑具体文档（已保存到服务器）。"
-        />
+        <ProjectHero project={data.project} title={data.project.title} />
 
         <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
           <aside className="space-y-5">
@@ -192,7 +189,31 @@ export function ProjectDashboard({ projectId }: Props) {
               <div className="mt-4 rounded-[22px] bg-slate-50 p-4 text-sm leading-7 text-slate-600">
                 <div>截止时间：{new Date(data.project.deadline).toLocaleString()}</div>
                 <div>邀请码：{data.project.inviteCode}</div>
-                <div className="mt-3">{data.project.contextSummary}</div>
+                <div className="mt-3 whitespace-pre-wrap font-medium text-slate-800">共享共识（摘要）</div>
+                <div className="mt-1 whitespace-pre-wrap">{data.project.contextSummary}</div>
+                {data.project.assignmentMilestones && data.project.assignmentMilestones.length > 0 ? (
+                  <div className="mt-4 border-t border-slate-200 pt-4">
+                    <div className="font-medium text-slate-800">关键时间节点</div>
+                    <ul className="mt-2 list-disc space-y-1.5 pl-5">
+                      {data.project.assignmentMilestones.map((m, i) => (
+                        <li key={`${i}-${m.label}`}>
+                          <span className="font-medium text-slate-700">{m.label}</span>
+                          <span className="text-slate-500"> — {formatMilestoneDueDisplay(m)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {data.project.keyDeliverables && data.project.keyDeliverables.length > 0 ? (
+                  <div className="mt-4 border-t border-slate-200 pt-4">
+                    <div className="font-medium text-slate-800">所需产出物</div>
+                    <ul className="mt-2 list-disc space-y-1 pl-5">
+                      {data.project.keyDeliverables.map((item, i) => (
+                        <li key={`${i}-${item}`}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </div>
               <Link
                 href={`/project/${projectId}/manage`}
