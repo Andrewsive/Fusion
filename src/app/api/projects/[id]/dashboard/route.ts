@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getWarningLevel } from "@/lib/warning";
 import { requireProjectMember } from "@/lib/auth";
+import { ensureDefaultProjectDocuments } from "@/lib/project-documents";
+import { toPublicUser } from "@/lib/user-serialize";
 
 function parseKeyDeliverables(raw: string | null | undefined): string[] | null {
   if (!raw) return null;
@@ -42,6 +44,10 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
+    if (members.length === 0) {
+      return NextResponse.json({ error: "Project has no members" }, { status: 403 });
+    }
+
     const tasksWithWarning = tasks.map((task: any) => ({
       ...task,
       warningLevel: getWarningLevel(task.deadline)
@@ -56,27 +62,55 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       )
     );
 
-    const myMembership = members.find((m) => m.userId === meId);
-    const me = myMembership?.user ?? members[0]?.user;
-    
-    if (!me) {
-      return NextResponse.json({ error: "User is not in project" }, { status: 403 });
+    if (meId) {
+      await ensureDefaultProjectDocuments(id);
     }
 
-    const isOwner = myMembership.role === "OWNER";
+    const documentRows = meId
+      ? await prisma.projectDocument.findMany({
+          where: { projectId: id },
+          include: { author: { select: { id: true, name: true } } },
+          orderBy: { createdAt: "asc" }
+        })
+      : [];
+
+    const myMembership = members.find((m) => m.userId === meId);
+    const me = myMembership?.user ?? null;
+    const isOwner = myMembership?.role === "OWNER";
+    const isGuest = meId === null;
 
     const { keyDeliverables: rawDeliverables, ...projectRest } = project;
 
+    const publicMembers = members.map((m) => toPublicUser(m.user));
+    const publicMe = me ? toPublicUser(me, { includeEmail: true }) : null;
+    const publicLogs = logs.map((log) => ({
+      ...log,
+      user: toPublicUser(log.user)
+    }));
+    const publicTasks = tasksWithWarning.map((task: any) => ({
+      ...task,
+      assignee: task.assignee ? toPublicUser(task.assignee) : null
+    }));
+
     return NextResponse.json({
+      isGuest,
       isOwner,
       project: {
         ...projectRest,
         keyDeliverables: parseKeyDeliverables(rawDeliverables)
       },
-      me,
-      members: members.map((member) => member.user),
-      tasks: tasksWithWarning,
-      logs
+      me: publicMe,
+      members: publicMembers,
+      tasks: publicTasks,
+      logs: publicLogs,
+      documents: documentRows.map((doc) => ({
+        id: doc.id,
+        title: doc.title,
+        content: doc.content,
+        createdAt: doc.createdAt.toISOString(),
+        updatedAt: doc.updatedAt.toISOString(),
+        author: doc.author
+      }))
     });
   } catch (error) {
     return NextResponse.json(

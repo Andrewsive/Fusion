@@ -2,7 +2,8 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { cookies } from "next/headers";
-import { USER_COOKIE } from "@/lib/auth";
+import { USER_COOKIE, getCurrentUserId } from "@/lib/auth";
+import { sessionCookieOptions } from "@/lib/session-cookie";
 
 const createProjectSchema = z.object({
   title: z.string().min(2),
@@ -19,11 +20,24 @@ function inviteCode(): string {
 export async function POST(request: NextRequest) {
   try {
     const body = createProjectSchema.parse(await request.json());
+    const sessionUserId = await getCurrentUserId();
 
     const result = await prisma.$transaction(async (tx) => {
-      const owner = await tx.user.create({
-        data: { name: body.ownerName }
-      });
+      let owner;
+      if (sessionUserId) {
+        const existing = await tx.user.findUnique({ where: { id: sessionUserId } });
+        if (!existing) {
+          throw new Error("登录已失效，请重新登录");
+        }
+        owner = await tx.user.update({
+          where: { id: sessionUserId },
+          data: { name: body.ownerName.trim() }
+        });
+      } else {
+        owner = await tx.user.create({
+          data: { name: body.ownerName.trim() }
+        });
+      }
 
       const project = await tx.project.create({
         data: {
@@ -65,11 +79,7 @@ export async function POST(request: NextRequest) {
     });
 
     const cookieStore = await cookies();
-    cookieStore.set(USER_COOKIE, result.owner.id, {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/"
-    });
+    cookieStore.set(USER_COOKIE, result.owner.id, sessionCookieOptions());
 
     return NextResponse.json({
       projectId: result.project.id,

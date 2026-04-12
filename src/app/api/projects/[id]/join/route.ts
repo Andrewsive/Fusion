@@ -1,11 +1,12 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { cookies } from "next/headers";
-import { USER_COOKIE } from "@/lib/auth";
+import { USER_COOKIE, getCurrentUserId } from "@/lib/auth";
+import { sessionCookieOptions } from "@/lib/session-cookie";
+import { createMemberJoin, linkExistingUserToProject } from "@/lib/project-join";
 
 const joinSchema = z.object({
-  name: z.string().min(1)
+  name: z.string().optional()
 });
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -13,42 +14,34 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const body = joinSchema.parse(await request.json());
     const { id } = await params;
 
-    const project = await prisma.project.findUnique({ where: { id } });
-    if (!project) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    const cookieStore = await cookies();
+    const currentId = await getCurrentUserId();
+
+    if (currentId) {
+      const result = await linkExistingUserToProject(currentId, id);
+      cookieStore.set(USER_COOKIE, result.userId, sessionCookieOptions());
+      return NextResponse.json({
+        projectId: result.projectId,
+        userId: result.userId,
+        alreadyMember: result.alreadyMember
+      });
     }
 
-    const user = await prisma.user.create({ data: { name: body.name } });
+    const name = body.name?.trim();
+    if (!name) {
+      return NextResponse.json({ error: "请先登录，或填写昵称后加入" }, { status: 400 });
+    }
 
-    await prisma.projectMember.create({
-      data: {
-        projectId: id,
-        userId: user.id,
-        role: "MEMBER"
-      }
-    });
+    const result = await createMemberJoin(id, name);
+    cookieStore.set(USER_COOKIE, result.userId, sessionCookieOptions());
 
-    await prisma.actionLog.create({
-      data: {
-        projectId: id,
-        userId: user.id,
-        actionType: "MEMBER_JOINED",
-        description: `${user.name} joined via invite`
-      }
-    });
-
-    const cookieStore = await cookies();
-    cookieStore.set(USER_COOKIE, user.id, {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/"
-    });
-
-    return NextResponse.json({ projectId: id, userId: user.id });
+    return NextResponse.json({ projectId: result.projectId, userId: result.userId });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Join failed" },
-      { status: 400 }
-    );
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: error.issues[0]?.message ?? "格式错误" }, { status: 400 });
+    }
+    const message = error instanceof Error ? error.message : "Join failed";
+    const status = message === "Project not found" ? 404 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }

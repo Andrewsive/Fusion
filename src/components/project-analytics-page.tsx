@@ -1,24 +1,16 @@
 "use client";
 
-
+import Link from "next/link";
 import { useState } from "react";
 import clsx from "clsx";
+import { ArrowLeft } from "lucide-react";
 
 import { TopNav } from "@/components/top-nav";
 import { ProjectHero } from "@/components/project-hero";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
+import { ANALYTICS_METRIC_LABELS, buildAnalyticsProfiles } from "@/lib/analytics-metrics";
 
-const METRIC_LABELS = ["功能开发", "缺陷修复", "文档撰写", "代码评审", "团队协作", "交付效率"];
 const FALLBACK_NAMES = ["队长", "小明", "小红", "李华", "成员E", "成员F", "成员G", "成员H"];
-
-type RadarProfile = {
-  id: string;
-  name: string;
-  role: string;
-  totalScore: number;
-  trendPct: number;
-  dimensions: number[];
-};
 
 function normalizeName(rawName: string, index: number) {
   const normalized = (rawName || "").trim();
@@ -26,32 +18,6 @@ function normalizeName(rawName: string, index: number) {
     return FALLBACK_NAMES[index] ?? `成员${index + 1}`;
   }
   return normalized;
-}
-
-function seedFromName(name: string) {
-  return [...name].reduce((sum, char) => sum + char.charCodeAt(0), 0);
-}
-
-function profileFromMember(
-  member: { id: string; name: string; accumulatedPoints: number; creditScore: number },
-  index: number
-): RadarProfile {
-  const safeName = normalizeName(member.name, index);
-  const seed = seedFromName(safeName);
-  const base = Math.max(45, Math.min(98, member.accumulatedPoints + member.creditScore - 5));
-  const dimensions = Array.from({ length: 6 }).map((_, dimIdx) => {
-    const variance = ((seed + dimIdx * 17) % 23) - 11;
-    return Math.max(35, Math.min(100, base + variance));
-  });
-
-  return {
-    id: member.id,
-    name: safeName,
-    role: ["前端/UI", "后端/API", "项目协同", "研究支持"][seed % 4],
-    totalScore: Math.round(dimensions.reduce((sum, value) => sum + value, 0) / dimensions.length),
-    trendPct: Number((((seed % 13) - 4) * 0.6).toFixed(1)),
-    dimensions
-  };
 }
 
 function points(values: number[], radius: number, center = 140) {
@@ -121,7 +87,7 @@ function RadarChart({ values, average }: { values: number[]; average: number[] }
             textAnchor="middle"
             dominantBaseline={baseline}
           >
-            {METRIC_LABELS[index]}
+            {ANALYTICS_METRIC_LABELS[index]}
           </text>
         );
       })}
@@ -141,11 +107,16 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
     return <main className="min-h-screen bg-white p-8">Loading...</main>;
   }
 
-  const profiles = data.members
-    .map((member, index) => profileFromMember(member, index))
-    .sort((a, b) => b.totalScore - a.totalScore);
+  const membersForAnalytics = data.members.map((member, index) => ({
+    ...member,
+    name: normalizeName(member.name, index)
+  }));
 
-  const teamAverage = METRIC_LABELS.map((_, index) =>
+  const profiles = buildAnalyticsProfiles(membersForAnalytics, data.tasks, data.logs).sort(
+    (a, b) => b.totalScore - a.totalScore
+  );
+
+  const teamAverage = ANALYTICS_METRIC_LABELS.map((_, index) =>
     Math.round(profiles.reduce((sum, profile) => sum + profile.dimensions[index], 0) / Math.max(profiles.length, 1))
   );
 
@@ -164,7 +135,7 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
         <ProjectHero
           project={data.project}
           title="协作平台成员贡献统计"
-          subtitle="聚焦成员贡献排名与维度能力，帮助团队快速识别长板和短板。"
+          subtitle="雷达维度由任务状态、工作量、信用分、积分与站内操作日志计算，趋势为近 7 天相对更早日志活跃度对比。"
         />
         <div className="mb-6">
           <Link
@@ -179,7 +150,7 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
         <section className="mb-6 rounded-2xl bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
           <div className="grid gap-3 text-sm md:grid-cols-4">
             <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <div className="text-muted">团队本周总产出</div>
+              <div className="text-muted">任务总工作量</div>
               <div className="mt-1 text-2xl font-semibold">{teamOutput} pts</div>
             </div>
             <div className="rounded-xl bg-slate-50 px-4 py-3">
@@ -193,7 +164,7 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
               </div>
             </div>
             <div className="rounded-xl bg-slate-50 px-4 py-3">
-              <div className="text-muted">环比趋势</div>
+              <div className="text-muted">平均活跃趋势</div>
               <div className={clsx("mt-1 text-2xl font-semibold", overallTrend >= 0 ? "text-blue-700" : "text-red-500")}>
                 {overallTrend >= 0 ? "↑" : "↓"} {Math.abs(overallTrend)}%
               </div>
@@ -235,7 +206,9 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
 
           <article className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
             <h2 className="mb-4 text-2xl font-semibold tracking-tight">全员细分维度雷达看板</h2>
-            <p className="mb-5 text-sm text-muted">虚线表示团队平均水平，实线表示成员当前水平。</p>
+            <p className="mb-5 text-sm text-muted">
+              虚线为团队该维度平均分，实线为个人得分。未分配任务成员在「完成率 / 工作量」上对齐团队基准。
+            </p>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {profiles.map((profile) => (
                 <div
@@ -263,7 +236,7 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
                   <div className="mt-3 border-t border-slate-100 pt-3">
                     <div className="mb-2 text-xs font-medium text-slate-500">维度分数</div>
                     <div className="grid grid-cols-2 gap-2">
-                      {METRIC_LABELS.map((label, dimIdx) => {
+                      {ANALYTICS_METRIC_LABELS.map((label, dimIdx) => {
                         const score = profile.dimensions[dimIdx];
                         const avg = teamAverage[dimIdx];
                         const diff = score - avg;

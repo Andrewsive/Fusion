@@ -1,71 +1,95 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FilePlus2, FileText, FolderOpen, PencilLine, Trash2, Users2 } from "lucide-react";
 import { TopNav } from "@/components/top-nav";
 import { ProjectHero } from "@/components/project-hero";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
+import type { DashboardDocument } from "@/lib/types";
 
 type Props = {
   projectId: string;
 };
 
-type ProjectDoc = {
-  id: string;
-  title: string;
-  author: string;
-  content: string;
-};
-
-function buildInitialDocs(
-  title: string,
-  summary: string,
-  members: Array<{ name: string }>,
-  tasks: Array<{ title: string; assignee: { name: string } | null; workloadPoints: number }>
-): ProjectDoc[] {
-  const owner = members[0]?.name ?? "队员";
-  return [
-    {
-      id: "overview-doc",
-      title: "项目概述",
-      author: owner,
-      content: `${title}\n\n项目概述：\n${summary || "暂无共享摘要。"}`
-    },
-    {
-      id: "task-plan-doc",
-      title: "任务拆解",
-      author: members[1]?.name ?? owner,
-      content:
-        tasks.length > 0
-          ? tasks.map((task, index) => `${index + 1}. ${task.title}｜负责人：${task.assignee?.name ?? "待分配"}｜工作量：${task.workloadPoints}`).join("\n")
-          : "当前还没有已生成任务，可以先在项目管理页或 AI 面板中补充内容。"
-    },
-    {
-      id: "member-notes-doc",
-      title: "成员协作记录",
-      author: members[2]?.name ?? owner,
-      content: members.map((member, index) => `${index + 1}. ${member.name}：待补充本周进展`).join("\n")
-    }
-  ];
-}
-
 export function ProjectDashboard({ projectId }: Props) {
-  const { data, error } = useProjectDashboard(projectId);
-  const [docs, setDocs] = useState<ProjectDoc[]>([]);
-  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [editingFocus, setEditingFocus] = useState(false);
+  const { data, error, refresh } = useProjectDashboard(projectId, { pausePolling: editingFocus });
 
-  useEffect(() => {
-    if (!data || docs.length > 0) return;
-    const initialDocs = buildInitialDocs(data.project.title, data.project.contextSummary, data.members, data.tasks);
-    setDocs(initialDocs);
-    setSelectedDocId(initialDocs[0]?.id ?? null);
-  }, [data, docs.length]);
+  const docs = useMemo(() => data?.documents ?? [], [data?.documents]);
+  const canEdit = Boolean(data?.me) && !data?.isGuest;
+
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [localTitle, setLocalTitle] = useState("");
+  const [localContent, setLocalContent] = useState("");
+
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const titleRef = useRef("");
+  const contentRef = useRef("");
 
   const selectedDoc = useMemo(() => {
     if (!docs.length) return null;
-    return docs.find((doc) => doc.id === selectedDocId) ?? docs[0];
+    return docs.find((doc) => doc.id === selectedDocId) ?? docs[0] ?? null;
   }, [docs, selectedDocId]);
+
+  useEffect(() => {
+    if (!docs.length) {
+      setSelectedDocId(null);
+      return;
+    }
+    setSelectedDocId((prev) => (prev && docs.some((d) => d.id === prev) ? prev : docs[0]!.id));
+  }, [docs]);
+
+  useEffect(() => {
+    const doc = docs.find((d) => d.id === selectedDocId);
+    if (!doc) {
+      if (!editingFocus) {
+        setLocalTitle("");
+        setLocalContent("");
+      }
+      return;
+    }
+    if (!editingFocus) {
+      setLocalTitle(doc.title);
+      setLocalContent(doc.content);
+      titleRef.current = doc.title;
+      contentRef.current = doc.content;
+    }
+  }, [docs, selectedDocId, editingFocus]);
+
+  const persistDoc = useCallback(
+    async (docId: string, title: string, content: string) => {
+      const res = await fetch(`/api/projects/${projectId}/documents/${docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, content })
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        console.error(payload.error || "保存失败");
+        return;
+      }
+      await refresh();
+    },
+    [projectId, refresh]
+  );
+
+  const schedulePersist = useCallback(() => {
+    if (!canEdit || !selectedDocId) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      void persistDoc(selectedDocId, titleRef.current, contentRef.current);
+    }, 750);
+  }, [canEdit, selectedDocId, persistDoc]);
+
+  const flushSave = useCallback(() => {
+    if (!canEdit || !selectedDocId) return;
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    void persistDoc(selectedDocId, titleRef.current, contentRef.current);
+  }, [canEdit, selectedDocId, persistDoc]);
 
   const contributionRanking = useMemo(
     () => [...(data?.members ?? [])].sort((a, b) => b.accumulatedPoints - a.accumulatedPoints),
@@ -76,40 +100,55 @@ export function ProjectDashboard({ projectId }: Props) {
     return docs.map((doc, index) => ({
       id: `file-${doc.id}`,
       name: `${doc.title}.${index === 0 ? "md" : index === 1 ? "docx" : "pdf"}`,
-      owner: doc.author
+      owner: doc.author.name
     }));
   }, [docs]);
 
-  function addDocument() {
-    const next = docs.length + 1;
-    const author = data?.me.name ?? "我";
-    const doc: ProjectDoc = {
-      id: `doc-${Date.now()}`,
-      title: `新文档 ${next}`,
-      author,
-      content: "请在这里编写具体文档内容。"
-    };
-    setDocs((prev) => [...prev, doc]);
-    setSelectedDocId(doc.id);
-  }
-
-  function deleteDocument(id: string) {
-    setDocs((prev) => {
-      const next = prev.filter((doc) => doc.id !== id);
-      if (selectedDocId === id) {
-        setSelectedDocId(next[0]?.id ?? null);
-      }
-      return next;
+  async function addDocument() {
+    if (!canEdit) return;
+    const res = await fetch(`/api/projects/${projectId}/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
     });
+    const payload = await res.json();
+    if (!res.ok) {
+      console.error(payload.error || "创建失败");
+      return;
+    }
+    const doc = payload.document as DashboardDocument;
+    await refresh();
+    setSelectedDocId(doc.id);
+    setLocalTitle(doc.title);
+    setLocalContent(doc.content);
+    titleRef.current = doc.title;
+    contentRef.current = doc.content;
   }
 
-  function renameDocument(id: string, title: string) {
-    setDocs((prev) => prev.map((doc) => (doc.id === id ? { ...doc, title } : doc)));
+  async function deleteDocument(id: string) {
+    if (!canEdit) return;
+    if (!window.confirm("确定删除该文档？")) return;
+    const res = await fetch(`/api/projects/${projectId}/documents/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      console.error(payload.error || "删除失败");
+      return;
+    }
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    await refresh();
+    setSelectedDocId((prev) => (prev === id ? null : prev));
   }
 
-  function updateContent(content: string) {
-    if (!selectedDoc) return;
-    setDocs((prev) => prev.map((doc) => (doc.id === selectedDoc.id ? { ...doc, content } : doc)));
+  function onTitleChange(value: string) {
+    setLocalTitle(value);
+    titleRef.current = value;
+    schedulePersist();
+  }
+
+  function onContentChange(value: string) {
+    setLocalContent(value);
+    contentRef.current = value;
+    schedulePersist();
   }
 
   if (error) {
@@ -128,10 +167,16 @@ export function ProjectDashboard({ projectId }: Props) {
     <main className="min-h-screen bg-[#f6f7fb] text-slate-900">
       <TopNav />
       <div className="shell py-6">
+        {data.isGuest || !data.me ? (
+          <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            你正以访客身份浏览。请在首页使用「加入现有项目」输入项目 ID 与昵称，即可编辑文档并操作任务。
+          </div>
+        ) : null}
+
         <ProjectHero
           project={data.project}
           title={data.project.title}
-          subtitle="左侧查看共享信息与文档资产，右侧用于显示和编辑具体文档。"
+          subtitle="左侧查看共享信息与文档资产，右侧用于显示和编辑具体文档（已保存到服务器）。"
         />
 
         <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
@@ -165,8 +210,9 @@ export function ProjectDashboard({ projectId }: Props) {
                 </div>
                 <button
                   type="button"
-                  onClick={addDocument}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-900 px-3 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-900 hover:text-white"
+                  onClick={() => void addDocument()}
+                  disabled={!canEdit}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-900 px-3 py-2 text-sm font-medium text-slate-900 transition enabled:hover:bg-slate-900 enabled:hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <FilePlus2 className="h-4 w-4" />
                   添加
@@ -181,7 +227,7 @@ export function ProjectDashboard({ projectId }: Props) {
                   >
                     <button type="button" onClick={() => setSelectedDocId(doc.id)} className="w-full text-left">
                       <div className="text-base font-semibold text-slate-900">{doc.title}</div>
-                      <div className="mt-1 text-sm text-slate-500">作者：{doc.author}</div>
+                      <div className="mt-1 text-sm text-slate-500">作者：{doc.author.name}</div>
                     </button>
                     <div className="mt-3 flex gap-2">
                       <button
@@ -193,8 +239,9 @@ export function ProjectDashboard({ projectId }: Props) {
                       </button>
                       <button
                         type="button"
-                        onClick={() => deleteDocument(doc.id)}
-                        className="rounded-full border border-red-200 px-3 py-1 text-xs text-red-500 hover:bg-red-50"
+                        onClick={() => void deleteDocument(doc.id)}
+                        disabled={!canEdit}
+                        className="rounded-full border border-red-200 px-3 py-1 text-xs text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         删除
                       </button>
@@ -242,7 +289,9 @@ export function ProjectDashboard({ projectId }: Props) {
                 {contributionRanking.map((member, index) => (
                   <div key={member.id} className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="text-sm font-medium text-slate-800">{index + 1}. {member.name}</div>
+                      <div className="text-sm font-medium text-slate-800">
+                        {index + 1}. {member.name}
+                      </div>
                       <div className="text-sm font-semibold text-slate-900">{member.accumulatedPoints}</div>
                     </div>
                   </div>
@@ -261,8 +310,8 @@ export function ProjectDashboard({ projectId }: Props) {
               {selectedDoc ? (
                 <div className="rounded-[22px] bg-slate-50 px-4 py-3 text-right">
                   <div className="text-xs uppercase tracking-[0.2em] text-slate-400">当前文档</div>
-                  <div className="mt-2 text-lg font-semibold text-slate-900">{selectedDoc.title}</div>
-                  <div className="text-sm text-slate-500">作者：{selectedDoc.author}</div>
+                  <div className="mt-2 text-lg font-semibold text-slate-900">{localTitle}</div>
+                  <div className="text-sm text-slate-500">作者：{selectedDoc.author.name}</div>
                 </div>
               ) : null}
             </div>
@@ -272,23 +321,36 @@ export function ProjectDashboard({ projectId }: Props) {
                 <div className="mb-4 flex items-center gap-3 rounded-[22px] bg-slate-50 p-4">
                   <PencilLine className="h-5 w-5 text-slate-500" />
                   <input
-                    value={selectedDoc.title}
-                    onChange={(event) => renameDocument(selectedDoc.id, event.target.value)}
-                    className="w-full border-0 bg-transparent text-xl font-semibold tracking-tight outline-none"
+                    value={localTitle}
+                    onChange={(event) => onTitleChange(event.target.value)}
+                    onFocus={() => setEditingFocus(true)}
+                    onBlur={() => {
+                      flushSave();
+                      setEditingFocus(false);
+                    }}
+                    readOnly={!canEdit}
+                    className="w-full border-0 bg-transparent text-xl font-semibold tracking-tight outline-none read-only:cursor-default"
                     placeholder="输入文档标题"
                   />
                 </div>
                 <textarea
-                  value={selectedDoc.content}
-                  onChange={(event) => updateContent(event.target.value)}
-                  className="min-h-[720px] w-full flex-1 resize-none rounded-[28px] border border-slate-200 bg-slate-50 p-6 text-base leading-8 text-slate-700 outline-none transition focus:border-slate-300"
+                  value={localContent}
+                  onChange={(event) => onContentChange(event.target.value)}
+                  onFocus={() => setEditingFocus(true)}
+                  onBlur={() => {
+                    flushSave();
+                    setEditingFocus(false);
+                  }}
+                  readOnly={!canEdit}
+                  className="min-h-[720px] w-full flex-1 resize-none rounded-[28px] border border-slate-200 bg-slate-50 p-6 text-base leading-8 text-slate-700 outline-none transition focus:border-slate-300 read-only:cursor-default"
                   placeholder="在这里输入文档内容..."
                 />
                 <div className="mt-4 flex justify-end">
                   <button
                     type="button"
-                    onClick={() => deleteDocument(selectedDoc.id)}
-                    className="inline-flex items-center gap-2 rounded-full border border-red-200 px-4 py-2 text-sm font-medium text-red-500 transition hover:bg-red-50"
+                    onClick={() => void deleteDocument(selectedDoc.id)}
+                    disabled={!canEdit}
+                    className="inline-flex items-center gap-2 rounded-full border border-red-200 px-4 py-2 text-sm font-medium text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Trash2 className="h-4 w-4" />
                     删除当前文档
@@ -297,7 +359,9 @@ export function ProjectDashboard({ projectId }: Props) {
               </div>
             ) : (
               <div className="flex flex-1 items-center justify-center p-12 text-center text-slate-500">
-                暂无文档，请先在左侧文档列表中添加一个新文档。
+                {canEdit
+                  ? "暂无文档，请点击左侧「添加」或使用成员账号首次进入以自动生成默认文档。"
+                  : "暂无文档。加入项目后可查看与编辑团队文档。"}
               </div>
             )}
           </section>

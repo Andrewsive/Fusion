@@ -3,9 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { DashboardData } from "@/lib/types";
 
-export function useProjectDashboard(projectId: string) {
+type Options = {
+  /** 为 true 时不轮询，避免编辑文档时被刷新覆盖 */
+  pausePolling?: boolean;
+};
+
+export function useProjectDashboard(projectId: string, options?: Options) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pausePolling = options?.pausePolling ?? false;
 
   const fetchDashboard = useCallback(async () => {
     const res = await fetch(`/api/projects/${projectId}/dashboard`, { cache: "no-store" });
@@ -16,15 +22,25 @@ export function useProjectDashboard(projectId: string) {
       return;
     }
 
-    setData(payload);
+    const normalized: DashboardData = {
+      ...payload,
+      documents: Array.isArray(payload.documents) ? payload.documents : [],
+      me: payload.me ?? null
+    };
+
+    setData(normalized);
     setError(null);
   }, [projectId]);
 
   useEffect(() => {
     fetchDashboard();
+  }, [fetchDashboard]);
+
+  useEffect(() => {
+    if (pausePolling) return undefined;
     const timer = window.setInterval(fetchDashboard, 15000);
     return () => window.clearInterval(timer);
-  }, [fetchDashboard]);
+  }, [fetchDashboard, pausePolling]);
 
   return {
     data,
