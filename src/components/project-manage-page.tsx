@@ -200,7 +200,7 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
   const [view, setView] = useState<"list" | "gantt" | "kanban">("kanban");
   const [digestBusy, setDigestBusy] = useState(false);
   const digestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [uploadPhase, setUploadPhase] = useState<"idle" | "extracting" | "parsing">("idle");
+  const [uploadPhase, setUploadPhase] = useState<"idle" | "processing">("idle");
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -221,31 +221,17 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
         setUploadError("仅项目创建者（组长）可在此上传文档并生成可编辑的任务草稿。");
         return;
       }
-      setUploadPhase("extracting");
+      setUploadPhase("processing");
       try {
         const formData = new FormData();
         formData.append("file", file);
-        const extractRes = await fetch("/api/ai/extract", { method: "POST", body: formData });
-        const extractPayload = await extractRes.json();
-        if (!extractRes.ok) {
-          throw new Error(typeof extractPayload.error === "string" ? extractPayload.error : "文档读取失败");
-        }
-        const text = String(extractPayload.text ?? "").trim();
-        if (text.length < 10) {
-          throw new Error(
-            "未能从文件中提取足够文本，请尝试更清晰的 PDF、Word（.docx）、Markdown/HTML、纯文本或图片（含 HEIC）。"
-          );
-        }
-
-        setUploadPhase("parsing");
-        const parseRes = await fetch(`/api/projects/${projectId}/ai-parse`, {
+        const res = await fetch(`/api/projects/${projectId}/requirement-upload`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ requirementText: text })
+          body: formData
         });
-        const parsePayload = await parseRes.json();
-        if (!parseRes.ok) {
-          throw new Error(typeof parsePayload.error === "string" ? parsePayload.error : "AI 解析失败");
+        const parsePayload = await res.json();
+        if (!res.ok) {
+          throw new Error(typeof parsePayload.error === "string" ? parsePayload.error : "文档处理失败");
         }
 
         await refresh();
@@ -636,21 +622,17 @@ export function ProjectManagePage({ projectId }: { projectId: string }) {
             <div className="soft-panel rounded-[28px] p-6">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-3 text-lg font-semibold">
-                  {uploadPhase === "extracting" ? (
+                  {uploadPhase === "processing" ? (
                     <Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-500" />
-                  ) : uploadPhase === "parsing" ? (
-                    <RefreshCw className="h-5 w-5 shrink-0 animate-spin text-blue-500" />
                   ) : (
                     <RefreshCw className="h-5 w-5 shrink-0 text-slate-400" />
                   )}
                   <span className="truncate">
-                    {uploadPhase === "extracting"
-                      ? "正在读取文档…"
-                      : uploadPhase === "parsing"
-                        ? "AI 正在提取关键产出物…"
-                        : deliverables.length > 0
-                          ? "AI 已提取关键产出物"
-                          : "AI 提取关键产出物"}
+                    {uploadPhase === "processing"
+                      ? "正在读取文档并由 AI 解析（可能需要 1～3 分钟）…"
+                      : deliverables.length > 0
+                        ? "AI 已提取关键产出物"
+                        : "AI 提取关键产出物"}
                   </span>
                 </div>
                 {uploadError ? (

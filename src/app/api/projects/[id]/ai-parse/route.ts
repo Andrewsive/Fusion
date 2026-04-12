@@ -4,7 +4,9 @@ import { parseRequirementWithAI } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
 import { requireProjectMember } from "@/lib/auth";
 
-export const maxDuration = 300;
+export const maxDuration = 900;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const inputSchema = z.object({
   requirementText: z.string().min(10)

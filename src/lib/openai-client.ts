@@ -1,12 +1,26 @@
 import OpenAI from "openai";
 
-/** Default matches OpenAI SDK (10 minutes). Override if responses are slow. */
+const THIRTY_MIN_MS = 30 * 60 * 1000;
+
+/** 默认与 OpenAI SDK 一致（约 10 分钟）。也可通过 OPENAI_TIMEOUT_MS 覆盖。 */
 function resolveTimeoutMs(): number | undefined {
   const raw = process.env.OPENAI_TIMEOUT_MS;
   if (raw === undefined || raw === "") return undefined;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return undefined;
-  return Math.min(Math.floor(n), 30 * 60 * 1000);
+  return Math.min(Math.floor(n), THIRTY_MIN_MS);
+}
+
+/**
+ * 文档提取（视觉）+ 作业解析等长耗时调用：默认 30 分钟，与 Vercel `maxDuration` 尽量对齐。
+ * OPENAI_LONG_TIMEOUT_MS：毫秒，范围 [120000, 1800000]（最长 30 分钟）。
+ */
+function resolveLongTimeoutMs(): number {
+  const raw = process.env.OPENAI_LONG_TIMEOUT_MS;
+  if (raw === undefined || raw === "") return THIRTY_MIN_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 120_000) return THIRTY_MIN_MS;
+  return Math.min(Math.floor(n), THIRTY_MIN_MS);
 }
 
 export function createOpenAIClient(): OpenAI {
@@ -15,5 +29,13 @@ export function createOpenAIClient(): OpenAI {
     apiKey: process.env.OPENAI_API_KEY,
     baseURL: process.env.OPENAI_BASE_URL?.trim() || undefined,
     ...(timeout !== undefined ? { timeout } : {})
+  });
+}
+
+export function createOpenAILongRunningClient(): OpenAI {
+  return new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    baseURL: process.env.OPENAI_BASE_URL?.trim() || undefined,
+    timeout: resolveLongTimeoutMs()
   });
 }
