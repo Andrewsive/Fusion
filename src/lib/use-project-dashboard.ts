@@ -1,7 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { DashboardData } from "@/lib/types";
+import type { DashboardData, DashboardDocument } from "@/lib/types";
+
+function normalizeDocument(raw: unknown): DashboardDocument {
+  const d = raw as Record<string, unknown>;
+  const author = d.author as { id: string; name: string };
+  return {
+    id: String(d.id),
+    title: String(d.title ?? ""),
+    content: String(d.content ?? ""),
+    description: typeof d.description === "string" ? d.description : "",
+    originalFileName: d.originalFileName != null ? String(d.originalFileName) : null,
+    mimeType: d.mimeType != null ? String(d.mimeType) : null,
+    fileSize: typeof d.fileSize === "number" ? d.fileSize : null,
+    storageKey: d.storageKey != null ? String(d.storageKey) : null,
+    createdAt: String(d.createdAt ?? ""),
+    updatedAt: String(d.updatedAt ?? ""),
+    author
+  };
+}
 
 type Options = {
   /** 为 true 时不轮询，避免编辑文档时被刷新覆盖 */
@@ -24,7 +42,7 @@ export function useProjectDashboard(projectId: string, options?: Options) {
 
     const normalized: DashboardData = {
       ...payload,
-      documents: Array.isArray(payload.documents) ? payload.documents : [],
+      documents: Array.isArray(payload.documents) ? payload.documents.map(normalizeDocument) : [],
       me: payload.me ?? null
     };
 

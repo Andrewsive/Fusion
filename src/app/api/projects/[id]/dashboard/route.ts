@@ -98,7 +98,10 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       return list ? sortMilestonesByDue(list) : null;
     })();
 
-    const publicMembers = members.map((m) => toPublicUser(m.user));
+    const publicMembers = members.map((m) => ({
+      ...toPublicUser(m.user),
+      role: m.role
+    }));
     const publicMe = me ? toPublicUser(me, { includeEmail: true }) : null;
     const publicLogs = logs.map((log) => ({
       ...log,
@@ -126,6 +129,11 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
         id: doc.id,
         title: doc.title,
         content: doc.content,
+        description: doc.description ?? "",
+        originalFileName: doc.originalFileName ?? null,
+        mimeType: doc.mimeType ?? null,
+        fileSize: doc.fileSize ?? null,
+        storageKey: doc.storageKey ?? null,
         createdAt: doc.createdAt.toISOString(),
         updatedAt: doc.updatedAt.toISOString(),
         author: doc.author

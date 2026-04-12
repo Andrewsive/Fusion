@@ -20,6 +20,12 @@ export type DashboardDocument = {
   id: string;
   title: string;
   content: string;
+  description: string;
+  originalFileName: string | null;
+  mimeType: string | null;
+  fileSize: number | null;
+  /** 非空表示本地磁盘上的作业文件，可经 API 下载/预览 */
+  storageKey: string | null;
   createdAt: string;
   updatedAt: string;
   author: { id: string; name: string };
@@ -53,6 +59,8 @@ export type DashboardData = {
     name: string;
     accumulatedPoints: number;
     creditScore: number;
+    /** ProjectMember.role：OWNER | MEMBER */
+    role: string;
   }>;
   tasks: DashboardTask[];
   logs: Array<{

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Bell, Grid3X3, Search, User, UserCircle } from "lucide-react";
+import { Bell, User, UserCircle } from "lucide-react";
 
 type Me = { id: string; name: string; email: string | null };
 
@@ -49,8 +49,6 @@ export function NavTrailing() {
 
   return (
     <div className="flex items-center gap-4 text-neutral-400">
-      <Search className="h-5 w-5" />
-      <Grid3X3 className="h-5 w-5" />
       {me ? (
         <Link href="/me" className="transition hover:text-neutral-900" title="个人中心" aria-label="个人中心">
           <User className="h-5 w-5" />

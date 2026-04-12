@@ -49,6 +49,14 @@ model ProjectDocument {
   authorId  String
   title     String
   content   String   @default("")
+  /// 上传者对作品的文字说明（作业描述、版本说明等）
+  description       String  @default("")
+  /// 原始文件名（有则表示磁盘上有对应上传文件）
+  originalFileName  String?
+  mimeType          String?
+  fileSize          Int?
+  /// 相对 uploads 根目录的路径，如 projectId/docId/name.ext
+  storageKey        String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

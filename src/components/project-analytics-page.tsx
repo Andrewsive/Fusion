@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
 import { ArrowLeft } from "lucide-react";
 
@@ -96,8 +97,28 @@ function RadarChart({ values, average }: { values: number[]; average: number[] }
 }
 
 export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
+  const searchParams = useSearchParams();
   const { data, error } = useProjectDashboard(projectId);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const syncedUrlMemberKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!data) return;
+    const raw = searchParams.get("member");
+    const key = raw ?? "";
+    if (key === syncedUrlMemberKeyRef.current) return;
+    syncedUrlMemberKeyRef.current = key;
+    if (!raw) return;
+    const membersForAnalytics = data.members.map((member, index) => ({
+      ...member,
+      name: normalizeName(member.name, index),
+      projectRole: member.role
+    }));
+    const profs = buildAnalyticsProfiles(membersForAnalytics, data.tasks, data.logs);
+    if (profs.some((p) => p.id === raw)) {
+      setActiveId(raw);
+    }
+  }, [data, searchParams]);
 
   if (error) {
     return <main className="min-h-screen bg-white p-8 text-critical">{error}</main>;
@@ -109,7 +130,8 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
 
   const membersForAnalytics = data.members.map((member, index) => ({
     ...member,
-    name: normalizeName(member.name, index)
+    name: normalizeName(member.name, index),
+    projectRole: member.role
   }));
 
   const profiles = buildAnalyticsProfiles(membersForAnalytics, data.tasks, data.logs).sort(

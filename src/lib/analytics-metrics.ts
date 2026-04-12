@@ -136,6 +136,7 @@ export type AnalyticsMemberInput = {
   name: string;
   accumulatedPoints: number;
   creditScore: number;
+  projectRole?: string;
 };
 
 export type AnalyticsProfile = {
@@ -174,7 +175,10 @@ export function buildAnalyticsProfiles(
     );
     const totalScore = Math.round(dimensions.reduce((a, b) => a + b, 0) / dimensions.length);
     const trendPct = computeActivityTrendPct(member.id, logs, nowMs);
-    const role = inferMemberRole(member.id, tasks, logs, index, maxAssignedWorkload);
+    const role =
+      member.projectRole === "OWNER"
+        ? "队长 · 项目协调"
+        : inferMemberRole(member.id, tasks, logs, index, maxAssignedWorkload);
 
     return {
       id: member.id,
