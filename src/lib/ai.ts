@@ -68,7 +68,7 @@ function normalizeAiParsedJson(input: unknown): unknown {
         deadlineOffsetHours: Number.isFinite(hn) && hn >= 1 ? Math.min(240, Math.floor(hn)) : 48
       };
     })
-    .filter((x): x is { title: string; workloadPoints: unknown; deadlineOffsetHours: unknown } => x !== null);
+    .filter((x): x is { title: string; workloadPoints: number; deadlineOffsetHours: number } => x !== null);
 
   return { ...root, tasks };
 }
