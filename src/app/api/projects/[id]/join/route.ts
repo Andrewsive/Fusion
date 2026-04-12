@@ -1,45 +1,31 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { cookies } from "next/headers";
-import { USER_COOKIE, getCurrentUserId } from "@/lib/auth";
+import { USER_COOKIE } from "@/lib/auth";
 import { sessionCookieOptions } from "@/lib/session-cookie";
-import { createMemberJoin, linkExistingUserToProject } from "@/lib/project-join";
+import { getRegisteredUserId } from "@/lib/require-registered-user";
+import { linkExistingUserToProject } from "@/lib/project-join";
 
-const joinSchema = z.object({
-  name: z.string().optional()
-});
-
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const body = joinSchema.parse(await request.json());
     const { id } = await params;
 
+    const reg = await getRegisteredUserId();
+    if (reg.ok === false) {
+      if (reg.reason === "no_session") {
+        return NextResponse.json({ error: "请先登录或注册后再加入项目" }, { status: 401 });
+      }
+      return NextResponse.json({ error: "请使用已注册账号登录后再加入项目" }, { status: 403 });
+    }
+
     const cookieStore = await cookies();
-    const currentId = await getCurrentUserId();
-
-    if (currentId) {
-      const result = await linkExistingUserToProject(currentId, id);
-      cookieStore.set(USER_COOKIE, result.userId, sessionCookieOptions());
-      return NextResponse.json({
-        projectId: result.projectId,
-        userId: result.userId,
-        alreadyMember: result.alreadyMember
-      });
-    }
-
-    const name = body.name?.trim();
-    if (!name) {
-      return NextResponse.json({ error: "请先登录，或填写昵称后加入" }, { status: 400 });
-    }
-
-    const result = await createMemberJoin(id, name);
+    const result = await linkExistingUserToProject(reg.userId, id);
     cookieStore.set(USER_COOKIE, result.userId, sessionCookieOptions());
-
-    return NextResponse.json({ projectId: result.projectId, userId: result.userId });
+    return NextResponse.json({
+      projectId: result.projectId,
+      userId: result.userId,
+      alreadyMember: result.alreadyMember
+    });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: error.issues[0]?.message ?? "格式错误" }, { status: 400 });
-    }
     const message = error instanceof Error ? error.message : "Join failed";
     const status = message === "Project not found" ? 404 : 400;
     return NextResponse.json({ error: message }, { status });

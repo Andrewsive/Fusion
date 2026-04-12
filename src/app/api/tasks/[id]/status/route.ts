@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { assertTransition } from "@/lib/state-machine";
-import { requireProjectMember } from "@/lib/auth";
+import { isProjectOwner, requireProjectMember } from "@/lib/auth";
 
 const statusSchema = z.object({
   status: z.enum(["UNASSIGNED", "TODO", "IN_PROGRESS", "BLOCKED", "DONE", "REALLOCATED"]),
@@ -36,7 +36,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           where: { id },
           data: {
             status: "DONE",
-            assigneeId
+            assigneeId,
+            ultimatumLevel: "NONE",
+            ultimatumWarnNotifiedAt: null,
+            ultimatumRedNotifiedAt: null
           },
           include: { assignee: true }
         });
@@ -61,11 +64,32 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ task: result });
     }
 
+    let nextAssigneeId: string | null = task.assigneeId;
+
+    if (body.assigneeId !== undefined) {
+      if (body.assigneeId !== userId) {
+        if (!(await isProjectOwner(task.projectId, userId))) {
+          return NextResponse.json({ error: "仅队长可将任务指派给其他成员" }, { status: 403 });
+        }
+        const member = await prisma.projectMember.findUnique({
+          where: { projectId_userId: { projectId: task.projectId, userId: body.assigneeId } }
+        });
+        if (!member) {
+          return NextResponse.json({ error: "负责人必须是本项目成员" }, { status: 400 });
+        }
+      }
+      nextAssigneeId = body.assigneeId;
+    } else if (body.status === "TODO") {
+      if (task.status === "UNASSIGNED" || !task.assigneeId) {
+        nextAssigneeId = userId;
+      }
+    }
+
     const updated = await prisma.task.update({
       where: { id },
       data: {
         status: body.status,
-        assigneeId: body.assigneeId ?? task.assigneeId ?? (body.status === "TODO" ? userId : null)
+        assigneeId: nextAssigneeId
       },
       include: { assignee: true }
     });

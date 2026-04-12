@@ -5,6 +5,7 @@ import { requireProjectMember } from "@/lib/auth";
 import { ensureDefaultProjectDocuments } from "@/lib/project-documents";
 import { toPublicUser } from "@/lib/user-serialize";
 import { parseAssignmentMilestones, sortMilestonesByDue } from "@/lib/assignment-milestones";
+import { runDeadlineUltimatumEngine } from "@/lib/deadline-ultimatum";
 
 function parseKeyDeliverables(raw: string | null | undefined): string[] | null {
   if (!raw) return null;
@@ -64,6 +65,16 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     );
 
     if (meId) {
+      await runDeadlineUltimatumEngine(id).catch((err) => console.error("deadline ultimatum", err));
+    }
+
+    const tasksLatest = await prisma.task.findMany({
+      where: { projectId: id },
+      include: { assignee: true },
+      orderBy: { createdAt: "asc" }
+    });
+
+    if (meId) {
       await ensureDefaultProjectDocuments(id);
     }
 
@@ -93,8 +104,9 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       ...log,
       user: toPublicUser(log.user)
     }));
-    const publicTasks = tasksWithWarning.map((task: any) => ({
+    const publicTasks = tasksLatest.map((task: any) => ({
       ...task,
+      warningLevel: getWarningLevel(task.deadline),
       assignee: task.assignee ? toPublicUser(task.assignee) : null
     }));
 

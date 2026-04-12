@@ -45,19 +45,24 @@ function RegisterForm() {
       <div className="shell mx-auto max-w-md py-10">
         <div className="line-card p-8">
           <h1 className="text-2xl font-semibold tracking-tight">注册</h1>
-          <p className="mt-2 text-sm text-muted">注册后使用同一账号加入多个项目，积分与信用分会累计在同一用户上。</p>
+          <p className="mt-2 text-sm text-muted">
+            注册后使用同一账号加入多个项目。请先设好<strong className="font-medium text-ink">显示昵称</strong>
+            ，成员与队长将在任务、看板等处看到此名称（可与真实姓名不同）。
+          </p>
 
           <form className="mt-6 space-y-4" onSubmit={onSubmit}>
             <div>
-              <label className="mb-1 block text-sm font-medium text-ink">昵称</label>
+              <label className="mb-1 block text-sm font-medium text-ink">显示昵称（必填）</label>
               <input
                 className="w-full rounded-xl border border-line px-3 py-2"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="在项目中显示的名称"
+                placeholder="例如：张三、组长小李、设计-Amy"
                 required
                 maxLength={40}
+                autoComplete="nickname"
               />
+              <p className="mt-1 text-xs text-muted">1～40 字，注册后可在「个人中心」修改。</p>
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-ink">邮箱</label>

@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { cookies } from "next/headers";
-import { USER_COOKIE, getCurrentUserId } from "@/lib/auth";
+import { USER_COOKIE } from "@/lib/auth";
 import { sessionCookieOptions } from "@/lib/session-cookie";
-import {
-  createMemberJoin,
-  linkExistingUserToProject,
-  resolveProjectByInviteCode
-} from "@/lib/project-join";
+import { getRegisteredUserId } from "@/lib/require-registered-user";
+import { linkExistingUserToProject, resolveProjectByInviteCode } from "@/lib/project-join";
 
 const joinBodySchema = z
   .object({
-    name: z.string().optional(),
     projectId: z.string().min(1).optional(),
     inviteCode: z.string().min(1).optional()
   })
@@ -38,28 +34,22 @@ export async function POST(request: NextRequest) {
       projectId = project.id;
     }
 
+    const reg = await getRegisteredUserId();
+    if (reg.ok === false) {
+      if (reg.reason === "no_session") {
+        return NextResponse.json({ error: "请先登录或注册后再加入项目" }, { status: 401 });
+      }
+      return NextResponse.json({ error: "请使用已注册账号登录后再加入项目" }, { status: 403 });
+    }
+
     const cookieStore = await cookies();
-    const currentId = await getCurrentUserId();
-
-    if (currentId) {
-      const result = await linkExistingUserToProject(currentId, projectId);
-      cookieStore.set(USER_COOKIE, result.userId, sessionCookieOptions());
-      return NextResponse.json({
-        projectId: result.projectId,
-        userId: result.userId,
-        alreadyMember: result.alreadyMember
-      });
-    }
-
-    const name = body.name?.trim();
-    if (!name) {
-      return NextResponse.json({ error: "请先登录，或填写昵称后加入" }, { status: 400 });
-    }
-
-    const result = await createMemberJoin(projectId, name);
+    const result = await linkExistingUserToProject(reg.userId, projectId);
     cookieStore.set(USER_COOKIE, result.userId, sessionCookieOptions());
-
-    return NextResponse.json({ projectId: result.projectId, userId: result.userId });
+    return NextResponse.json({
+      projectId: result.projectId,
+      userId: result.userId,
+      alreadyMember: result.alreadyMember
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       const msg = error.issues[0]?.message ?? "请求格式错误";

@@ -6,6 +6,32 @@ import Link from "next/link";
 
 type JoinMode = "id" | "invite";
 
+type MyProjectRow = {
+  id: string;
+  title: string;
+  role: string;
+  inviteCode: string;
+  deadline: string;
+};
+
+/** 与 DESIGN.md 一致；首页专用（三卡并列时需更宽版心） */
+const ui = {
+  shell: "mx-auto w-full max-w-6xl px-5 pb-20 pt-14 sm:px-6 sm:pt-16",
+  card: "rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-sm sm:p-6",
+  field:
+    "w-full rounded-xl border-0 bg-neutral-50 px-4 py-3 text-sm text-neutral-900 ring-1 ring-inset ring-neutral-200 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-900",
+  btnPrimary:
+    "w-full rounded-xl bg-neutral-900 py-3 text-center text-sm font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40",
+  btnGhost:
+    "inline-flex items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-900 transition hover:bg-neutral-50",
+  btnGhostDark:
+    "inline-flex items-center justify-center rounded-xl border border-neutral-900 bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800",
+  btnOutline:
+    "w-full rounded-xl border border-neutral-200 bg-white py-3 text-center text-sm font-medium text-neutral-900 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50",
+  muted: "text-sm text-neutral-500",
+  label: "mb-1.5 block text-xs font-medium text-neutral-500"
+} as const;
+
 export default function HomePage() {
   const router = useRouter();
   const [title, setTitle] = useState("");
@@ -15,10 +41,12 @@ export default function HomePage() {
   const [joinMode, setJoinMode] = useState<JoinMode>("invite");
   const [joinProjectId, setJoinProjectId] = useState("");
   const [joinInviteCode, setJoinInviteCode] = useState("");
-  const [joinName, setJoinName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sessionUser, setSessionUser] = useState<{ name: string; email: string | null } | null | undefined>(undefined);
   const [authReady, setAuthReady] = useState(false);
+  const [myProjects, setMyProjects] = useState<MyProjectRow[]>([]);
+  const [myProjectsLoading, setMyProjectsLoading] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
 
   useEffect(() => {
     fetch("/api/auth/me", { cache: "no-store" })
@@ -37,12 +65,33 @@ export default function HomePage() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!sessionUser) {
+      setMyProjects([]);
+      setSelectedProjectId("");
+      return;
+    }
+    setMyProjectsLoading(true);
+    fetch("/api/projects/mine", { cache: "no-store" })
+      .then(async (r) => {
+        const d = (await r.json()) as { projects?: MyProjectRow[] };
+        if (!r.ok) {
+          setMyProjects([]);
+          return;
+        }
+        setMyProjects(Array.isArray(d.projects) ? d.projects : []);
+      })
+      .catch(() => setMyProjects([]))
+      .finally(() => setMyProjectsLoading(false));
+  }, [sessionUser]);
+
   const isRegistered = Boolean(sessionUser?.email);
+  const canUseApp = authReady && isRegistered;
 
   async function createProject() {
     setError(null);
     if (!isRegistered) {
-      setError("创建项目需先注册并登录。匿名身份仅用于加入他人项目。");
+      setError("请先登录或注册。");
       return;
     }
     const t = title.trim();
@@ -89,8 +138,10 @@ export default function HomePage() {
       setError("请稍候，正在确认登录状态…");
       return;
     }
-
-    const hasSession = Boolean(sessionUser);
+    if (!isRegistered) {
+      setError("请先登录或注册后再加入项目。");
+      return;
+    }
 
     const base =
       joinMode === "id"
@@ -106,17 +157,10 @@ export default function HomePage() {
       return;
     }
 
-    if (!hasSession && !joinName.trim()) {
-      setError("请先登录，或填写你的昵称后再加入");
-      return;
-    }
-
-    const payload = hasSession ? base : { ...base, name: joinName.trim() };
-
     const res = await fetch("/api/projects/join", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(base)
     });
 
     const data = await res.json();
@@ -129,191 +173,210 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen bg-bg">
-      <div className="shell mx-auto max-w-5xl pt-6">
-        <div className="mb-4 flex flex-wrap items-center justify-end gap-x-4 gap-y-2 border-b border-line pb-4 text-sm">
-          <p className="mr-auto max-w-xl text-muted">
-            首次使用请先{" "}
-            <Link href="/register" className="font-medium text-ink underline decoration-line hover:opacity-80">
-              注册
-            </Link>{" "}
-            或{" "}
-            <Link href="/login" className="font-medium text-ink underline decoration-line hover:opacity-80">
-              登录
-            </Link>
-            ，便于跨项目使用同一账号；下面两栏分别为「新建项目」与「加入他人创建的项目」。
-          </p>
-          {!authReady ? (
-            <span className="text-muted">登录状态加载中…</span>
-          ) : sessionUser && isRegistered ? (
-            <span className="text-ink">
-              <span className="font-medium">{sessionUser.name}</span>
-              <span className="ml-1 text-muted">({sessionUser.email})</span>
-              <span className="mx-2 text-muted">·</span>
-              <button
-                type="button"
-                className="font-medium text-ink underline decoration-line hover:opacity-80"
-                onClick={() => void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.reload())}
-              >
-                退出
-              </button>
-            </span>
-          ) : sessionUser ? (
-            <span className="max-w-md text-right text-ink">
-              <span className="font-medium">{sessionUser.name}</span>
-              <span className="ml-1 text-muted">（匿名，未注册）</span>
-              <span className="mx-2 text-muted">·</span>
-              <button
-                type="button"
-                className="font-medium text-ink underline decoration-line hover:opacity-80"
-                onClick={() => void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.reload())}
-              >
-                清除本机身份
-              </button>
-              <span className="mx-2 text-muted">·</span>
-              <Link href="/register" className="font-medium text-ink underline decoration-line hover:opacity-80">
-                注册
-              </Link>
-            </span>
-          ) : (
-            <div className="flex items-center gap-3 font-medium text-ink">
-              <Link href="/login" className="rounded-full border border-line bg-white px-4 py-2 hover:bg-slate-50">
-                登录
-              </Link>
-              <Link href="/register" className="rounded-full border border-ink bg-ink px-4 py-2 text-white hover:opacity-90">
-                注册
-              </Link>
+    <main className="min-h-screen bg-neutral-50 text-neutral-900">
+      <div className={ui.shell}>
+        <header className="text-center">
+          <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Fusion Space</h1>
+          <p className={`${ui.muted} mt-2`}>团队项目协作</p>
+        </header>
+
+        {!authReady ? (
+          <p className="mt-14 text-center text-sm text-neutral-400">正在确认登录状态…</p>
+        ) : null}
+
+        {authReady && !canUseApp ? (
+          <div className="mx-auto mt-12 max-w-md">
+            <section className={`${ui.card} text-center`}>
+              <h2 className="text-base font-semibold text-neutral-900">请先登录或注册</h2>
+              {!sessionUser ? (
+                <>
+                  <p className={`${ui.muted} mt-3`}>
+                    未登录无法打开、新建或加入项目。请使用已注册账号登录；没有账号可先注册。
+                  </p>
+                  {joinInviteCode ? (
+                    <p className="mt-4 text-xs leading-relaxed text-neutral-500">
+                      已从链接带入邀请码，登录后在「加入项目」中可直接使用。
+                    </p>
+                  ) : null}
+                  <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
+                    <Link href="/login" className={`${ui.btnGhost} sm:min-w-[120px]`}>
+                      登录
+                    </Link>
+                    <Link href="/register" className={`${ui.btnGhostDark} sm:min-w-[120px]`}>
+                      注册
+                    </Link>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className={`${ui.muted} mt-3`}>
+                    当前会话未绑定注册邮箱。请退出后使用已注册账号登录，或完成注册。
+                  </p>
+                  <div className="mt-8 flex flex-col gap-3">
+                    <Link href="/login" className={ui.btnGhostDark}>
+                      改用注册账号登录
+                    </Link>
+                    <Link href="/register" className={ui.btnGhost}>
+                      注册新账号
+                    </Link>
+                    <button
+                      type="button"
+                      className={ui.btnOutline}
+                      onClick={() => void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.reload())}
+                    >
+                      清除本机身份
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
+        ) : null}
+
+        {canUseApp ? (
+          <>
+            <div className="mt-10 flex flex-col items-center gap-2 text-center text-sm">
+              <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-neutral-700">
+                <span className="font-medium">{sessionUser!.name}</span>
+                <span className="text-neutral-400">·</span>
+                <span className="max-w-[260px] truncate text-neutral-500">{sessionUser!.email}</span>
+                <span className="text-neutral-400">·</span>
+                <button
+                  type="button"
+                  className="text-neutral-900 underline decoration-neutral-300 underline-offset-4 hover:decoration-neutral-900"
+                  onClick={() => void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.reload())}
+                >
+                  退出
+                </button>
+              </div>
+              <p className="max-w-lg text-xs text-neutral-500">登录后可打开已有项目、新建项目或通过邀请码 / 项目 ID 加入。</p>
             </div>
-          )}
-        </div>
-      </div>
 
-      {error ? (
-        <div className="shell mx-auto max-w-5xl pb-3">
-          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>
-        </div>
-      ) : null}
+            {error ? <p className="mt-8 text-center text-sm text-red-600">{error}</p> : null}
 
-      <div className="shell mx-auto grid max-w-5xl gap-6 pb-8 md:grid-cols-2">
-        <section className="line-card p-6">
-          <h1 className="text-3xl font-semibold tracking-tight">Fusion Space MVP</h1>
-          <p className="mt-2 text-sm text-muted">
-            创建项目后你将成为队长，并可邀请成员、使用 AI 拆解任务与协作看板。
-            <strong className="font-medium text-ink"> 必须先注册并登录</strong>
-            ，系统不再为未登录访客自动创建「队长」账号。
-          </p>
+            <div className="mt-10 grid grid-cols-1 items-stretch gap-6 lg:grid-cols-3">
+              <section className={`${ui.card} flex flex-col`}>
+                <h2 className="text-base font-semibold text-neutral-900">打开项目</h2>
+                <p className={`${ui.muted} mt-1`}>选择后进入项目主页</p>
+                {myProjectsLoading ? (
+                  <p className="mt-4 text-sm text-neutral-400">加载列表中…</p>
+                ) : myProjects.length === 0 ? (
+                  <p className={`${ui.muted} mt-4`}>暂无项目，可在旁新建或加入。</p>
+                ) : (
+                  <div className="mt-4 flex flex-1 flex-col gap-3">
+                    <select
+                      className={ui.field}
+                      value={selectedProjectId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setSelectedProjectId(id);
+                        if (id) router.push(`/project/${id}`);
+                      }}
+                    >
+                      <option value="">选择项目…</option>
+                      {myProjects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.title}
+                          {p.role === "OWNER" ? " · 队长" : " · 成员"}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!selectedProjectId}
+                      onClick={() => selectedProjectId && router.push(`/project/${selectedProjectId}`)}
+                      className={ui.btnPrimary}
+                    >
+                      进入
+                    </button>
+                  </div>
+                )}
+              </section>
 
-          <div className="mt-4 space-y-3">
-            <input
-              className="w-full rounded-xl border border-line px-3 py-2"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="项目名称（必填）"
-            />
-            <div>
-              <label className="mb-1 block text-xs text-muted">截止时间（必填）</label>
-              <input className="w-full rounded-xl border border-line px-3 py-2" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+              <section className={`${ui.card} flex flex-col`}>
+                <h2 className="text-base font-semibold text-neutral-900">新建项目</h2>
+                <p className={`${ui.muted} mt-1`}>你将担任队长</p>
+                <div className="mt-5 flex flex-1 flex-col space-y-4">
+                  <input
+                    className={ui.field}
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="项目名称"
+                  />
+                  <div>
+                    <label className={ui.label}>截止时间</label>
+                    <input
+                      className={ui.field}
+                      type="datetime-local"
+                      value={deadline}
+                      onChange={(e) => setDeadline(e.target.value)}
+                    />
+                  </div>
+                  <input
+                    className={ui.field}
+                    value={ownerName}
+                    onChange={(e) => setOwnerName(e.target.value)}
+                    placeholder="队长显示昵称"
+                  />
+                  <input
+                    className={ui.field}
+                    value={memberNames}
+                    onChange={(e) => setMemberNames(e.target.value)}
+                    placeholder="初始成员（昵称，逗号分隔，可选）"
+                  />
+                </div>
+                <button type="button" onClick={createProject} className={`${ui.btnPrimary} mt-5`}>
+                  创建
+                </button>
+              </section>
+
+              <section className={`${ui.card} flex flex-col`}>
+                <h2 className="text-base font-semibold text-neutral-900">加入项目</h2>
+                <p className={`${ui.muted} mt-1`}>向队长索取邀请码或项目 ID</p>
+                <div className="mt-4 flex gap-6 border-b border-neutral-200">
+                  <button
+                    type="button"
+                    onClick={() => setJoinMode("invite")}
+                    className={`border-b-2 pb-2 text-sm font-medium transition ${
+                      joinMode === "invite" ? "border-neutral-900 text-neutral-900" : "border-transparent text-neutral-400 hover:text-neutral-600"
+                    }`}
+                  >
+                    邀请码
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setJoinMode("id")}
+                    className={`border-b-2 pb-2 text-sm font-medium transition ${
+                      joinMode === "id" ? "border-neutral-900 text-neutral-900" : "border-transparent text-neutral-400 hover:text-neutral-600"
+                    }`}
+                  >
+                    项目 ID
+                  </button>
+                </div>
+                <div className="mt-5 flex flex-1 flex-col space-y-4">
+                  {joinMode === "invite" ? (
+                    <input
+                      className={ui.field}
+                      value={joinInviteCode}
+                      onChange={(e) => setJoinInviteCode(e.target.value)}
+                      placeholder="邀请码"
+                    />
+                  ) : (
+                    <input
+                      className={`${ui.field} font-mono text-[13px]`}
+                      value={joinProjectId}
+                      onChange={(e) => setJoinProjectId(e.target.value)}
+                      placeholder="项目 ID"
+                    />
+                  )}
+                </div>
+                <button type="button" onClick={joinProject} className={`${ui.btnOutline} mt-5`}>
+                  加入
+                </button>
+              </section>
             </div>
-            <input
-              className="w-full rounded-xl border border-line px-3 py-2"
-              value={ownerName}
-              onChange={(e) => setOwnerName(e.target.value)}
-              placeholder="队长显示昵称（必填）"
-            />
-            <input
-              className="w-full rounded-xl border border-line px-3 py-2"
-              value={memberNames}
-              onChange={(e) => setMemberNames(e.target.value)}
-              placeholder="初始成员昵称，逗号分隔（可选，可稍后在项目里再加）"
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={createProject}
-            disabled={!isRegistered}
-            className="mt-4 rounded-full border border-ink bg-ink px-4 py-2 text-sm font-medium text-white enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            创建项目
-          </button>
-          {!authReady ? null : !isRegistered ? (
-            <p className="mt-2 text-sm text-muted">
-              当前未处于已注册登录状态，无法创建项目。请先
-              <Link href="/login" className="mx-1 font-medium text-ink underline decoration-line">
-                登录
-              </Link>
-              或
-              <Link href="/register" className="mx-1 font-medium text-ink underline decoration-line">
-                注册
-              </Link>
-              ；若浏览器里残留匿名身份，可先点右上角「清除本机身份」。
-            </p>
-          ) : null}
-        </section>
-
-        <section className="line-card p-6">
-          <h2 className="text-2xl font-semibold tracking-tight">加入项目</h2>
-          <p className="mt-2 text-sm text-muted">
-            此处<strong>不会</strong>列出任何现成项目。你必须向队长索取<strong>邀请码</strong>或<strong>项目 ID</strong>（对方在创建项目后可见），再在此输入；若队长分享的是链接（含{" "}
-            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs">?invite=邀请码</code>
-            ），打开后邀请码会自动填入。若无本机会话需填写昵称；已有会话（含匿名加入）可免填昵称。
-          </p>
-
-          <div className="mt-4 flex gap-2 rounded-xl border border-line bg-slate-50 p-1">
-            <button
-              type="button"
-              onClick={() => setJoinMode("invite")}
-              className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition ${joinMode === "invite" ? "bg-white shadow-sm" : "text-muted"}`}
-            >
-              邀请码
-            </button>
-            <button
-              type="button"
-              onClick={() => setJoinMode("id")}
-              className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition ${joinMode === "id" ? "bg-white shadow-sm" : "text-muted"}`}
-            >
-              项目 ID
-            </button>
-          </div>
-
-          <div className="mt-4 space-y-3">
-            {joinMode === "invite" ? (
-              <input
-                className="w-full rounded-xl border border-line px-3 py-2"
-                value={joinInviteCode}
-                onChange={(e) => setJoinInviteCode(e.target.value)}
-                placeholder="队长提供的邀请码"
-              />
-            ) : (
-              <input
-                className="w-full rounded-xl border border-line px-3 py-2 font-mono text-sm"
-                value={joinProjectId}
-                onChange={(e) => setJoinProjectId(e.target.value)}
-                placeholder="队长提供的项目 ID"
-              />
-            )}
-            {sessionUser ? (
-              <p className="text-sm text-muted">
-                {isRegistered ? "已登录，加入时无需填写昵称。" : "当前为匿名身份，加入时无需填写昵称。"}
-              </p>
-            ) : (
-              <input
-                className="w-full rounded-xl border border-line px-3 py-2"
-                value={joinName}
-                onChange={(e) => setJoinName(e.target.value)}
-                placeholder="你的昵称（未登录时必填）"
-              />
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={joinProject}
-            disabled={!authReady}
-            className="mt-4 rounded-full border border-line px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            加入项目
-          </button>
-        </section>
+          </>
+        ) : null}
       </div>
     </main>
   );

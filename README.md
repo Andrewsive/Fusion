@@ -24,6 +24,7 @@ npm run dev
 
 ### 常见问题
 
+- **报错 `The column ... progressDigest does not exist` 或 Task 新字段不存在**：本地库落后于 `schema.prisma`。请先**停止** `npm run dev`，再执行 `npx prisma migrate deploy`（或开发时用 `npx prisma db push`），然后 `npx prisma generate`，再启动 dev。
 - **接口报错 / 页面空白 / Prisma P1001**：`.env` 里若写了 `postgresql://...` 但本机没有跑 Postgres，会连不上库。请改回 `DATABASE_URL="file:./dev.db"` 或先启动数据库。
 - **迁移失败 P3018 / 表已存在**：本地 SQLite 状态异常时执行（**会清空本地数据**）：
 
@@ -40,7 +41,7 @@ npm run db:reset
 
 ## Key API Routes
 
-- `POST /api/projects` · `POST /api/projects/join` · `POST /api/auth/register` · `POST /api/auth/login`
+- `POST /api/projects` · `POST /api/projects/join` · `POST /api/auth/register` · `POST /api/auth/login` · `PATCH /api/auth/me` · `GET /api/me/overview`
 - `POST /api/projects/:id/ai-parse` · `PATCH /api/tasks/:id/status` · `POST /api/tasks/:id/reallocate`
 - `GET /api/projects/:id/dashboard` · `GET /api/projects/:id/report`
 
@@ -52,4 +53,4 @@ npm run db:reset
 
 ## Cursor：UI 风格
 
-仓库内 `.cursor/rules/preserve-ui-style.mdc` 约定：**修改功能时不得破坏既有浅色 Notion 式版式与首页双栏布局**，除非在对话中明确要求改版。
+仓库内 `.cursor/rules/preserve-ui-style.mdc` 与根目录 `DESIGN.md` 约定 UI 定稿；**修改功能时不得擅自换风格**，除非在对话中明确要求改版。

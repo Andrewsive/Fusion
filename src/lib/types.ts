@@ -1,6 +1,8 @@
 import type { AssignmentMilestone } from "@/lib/assignment-milestones";
 import { TaskStatus, WarningLevel } from "@/lib/domain";
 
+export type TaskUltimatumLevel = "NONE" | "WARN_3D" | "RED_24H";
+
 export type DashboardTask = {
   id: string;
   title: string;
@@ -9,6 +11,7 @@ export type DashboardTask = {
   workloadPoints: number;
   deadline: string;
   warningLevel: WarningLevel;
+  ultimatumLevel?: TaskUltimatumLevel;
   isReallocated: boolean;
   assignee: { id: string; name: string } | null;
 };
@@ -35,6 +38,8 @@ export type DashboardData = {
     assignmentMilestones?: AssignmentMilestone[] | null;
     deadline: string;
     inviteCode: string;
+    progressDigest?: string | null;
+    progressDigestAt?: string | null;
   };
   me: {
     id: string;

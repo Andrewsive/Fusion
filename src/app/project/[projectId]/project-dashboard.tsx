@@ -6,6 +6,7 @@ import { FilePlus2, FileText, FolderOpen, PencilLine, Trash2, Users2 } from "luc
 import { TopNav } from "@/components/top-nav";
 import { ProjectHero } from "@/components/project-hero";
 import { formatMilestoneDueDisplay } from "@/lib/assignment-milestones";
+import { memberWorkloadPoints } from "@/lib/member-workload";
 import { useProjectDashboard } from "@/lib/use-project-dashboard";
 import type { DashboardDocument } from "@/lib/types";
 
@@ -170,7 +171,7 @@ export function ProjectDashboard({ projectId }: Props) {
       <div className="shell py-6">
         {data.isGuest || !data.me ? (
           <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            你正以访客身份浏览。请在首页使用「加入现有项目」输入项目 ID 与昵称，即可编辑文档并操作任务。
+            你正以访客身份浏览（未携带成员登录态）。请返回首页使用已注册账号登录，并通过「加入项目」或队长邀请加入本项目后，即可编辑与操作。
           </div>
         ) : null}
 
@@ -214,6 +215,30 @@ export function ProjectDashboard({ projectId }: Props) {
                     </ul>
                   </div>
                 ) : null}
+                <div className="mt-4 border-t border-slate-200 pt-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <div className="font-medium text-slate-800">AI 团队进度简报</div>
+                    {data.project.progressDigestAt ? (
+                      <span className="text-xs text-slate-500">
+                        {new Date(data.project.progressDigestAt).toLocaleString("zh-CN", {
+                          month: "numeric",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit"
+                        })}
+                      </span>
+                    ) : null}
+                  </div>
+                  {data.project.progressDigest ? (
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-700">
+                      {data.project.progressDigest}
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-500">
+                      暂无简报。成员在项目管理页更新任务状态后，系统会自动汇总生成。
+                    </p>
+                  )}
+                </div>
               </div>
               <Link
                 href={`/project/${projectId}/manage`}
@@ -310,10 +335,18 @@ export function ProjectDashboard({ projectId }: Props) {
                 {contributionRanking.map((member, index) => (
                   <div key={member.id} className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="text-sm font-medium text-slate-800">
-                        {index + 1}. {member.name}
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="text-sm font-medium text-slate-800">
+                          {index + 1}. {member.name}
+                        </span>
+                        <span
+                          className="shrink-0 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-800 shadow-sm"
+                          title="当前进行中任务所承担的工作量点数"
+                        >
+                          {data?.tasks ? memberWorkloadPoints(data.tasks, member.id) : 0} 点进行中
+                        </span>
                       </div>
-                      <div className="text-sm font-semibold text-slate-900">{member.accumulatedPoints}</div>
+                      <div className="shrink-0 text-sm font-semibold text-slate-900">{member.accumulatedPoints}</div>
                     </div>
                   </div>
                 ))}

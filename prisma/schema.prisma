@@ -19,6 +19,8 @@ model User {
   assignedTasks     Task[]
   logs              ActionLog[]
   authoredDocuments ProjectDocument[]
+  notifications     UserNotification[]
+  emailOutbox       EmailOutbox[]
 }
 
 model Project {
@@ -28,6 +30,8 @@ model Project {
   contextSummary        String          @default("No context yet")
   keyDeliverables       String?
   assignmentMilestones  String?
+  progressDigest        String?
+  progressDigestAt      DateTime?
   status                String          @default("ACTIVE")
   deadline          DateTime
   createdAt         DateTime        @default(now())
@@ -36,6 +40,7 @@ model Project {
   tasks             Task[]
   logs              ActionLog[]
   documents         ProjectDocument[]
+  notifications     UserNotification[]
 }
 
 model ProjectDocument {
@@ -67,18 +72,22 @@ model ProjectMember {
 }
 
 model Task {
-  id             String   @id @default(cuid())
-  projectId      String
-  assigneeId     String?
-  title          String
-  sourceLabel    String?
-  workloadPoints Int
-  status         String   @default("UNASSIGNED")
-  deadline       DateTime
-  warningLevel   String   @default("NORMAL")
-  isReallocated  Boolean  @default(false)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                      String    @id @default(cuid())
+  projectId               String
+  assigneeId              String?
+  title                   String
+  sourceLabel             String?
+  workloadPoints          Int
+  status                  String    @default("UNASSIGNED")
+  deadline                DateTime
+  warningLevel            String    @default("NORMAL")
+  isReallocated           Boolean   @default(false)
+  /// 最后通牒：NONE | WARN_3D（≤72h）| RED_24H（≤24h），全员可见
+  ultimatumLevel          String    @default("NONE")
+  ultimatumWarnNotifiedAt DateTime?
+  ultimatumRedNotifiedAt  DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   assignee User?   @relation(fields: [assigneeId], references: [id])
@@ -94,4 +103,44 @@ model ActionLog {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// 站内信：登录用户收件箱，可关联项目与外链
+model UserNotification {
+  id          String    @id @default(cuid())
+  userId      String
+  projectId   String?
+  kind        String
+  title       String
+  body        String
+  actionUrl   String?
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  emailDeliveries EmailOutbox[]
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}
+
+/// 出站邮件记录（可扩展为异步队列重试）
+model EmailOutbox {
+  id                    String   @id @default(cuid())
+  userId                String?
+  toAddress             String
+  subject               String
+  textBody              String
+  status                String   @default("PENDING")
+  errorMessage          String?
+  relatedNotificationId String?
+  createdAt             DateTime @default(now())
+  sentAt                DateTime?
+
+  user                User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  relatedNotification UserNotification?  @relation(fields: [relatedNotificationId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([userId])
 }
