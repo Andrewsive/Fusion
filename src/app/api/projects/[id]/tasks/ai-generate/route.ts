@@ -20,7 +20,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const members = await prisma.projectMember.findMany({
       where: { projectId: id },
-      include: { user: true }
+      include: {
+        user: {
+          select: { id: true, name: true, accumulatedPoints: true, creditScore: true }
+        }
+      }
     });
 
     const memberUsers = members.map((m) => m.user);

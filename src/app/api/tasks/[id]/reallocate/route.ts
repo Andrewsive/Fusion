@@ -41,7 +41,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const members = await prisma.projectMember.findMany({
       where: { projectId: task.projectId },
-      include: { user: true }
+      include: {
+        user: {
+          select: { id: true, name: true, accumulatedPoints: true, creditScore: true }
+        }
+      }
     });
 
     const candidateUserIds = new Set(
@@ -131,7 +135,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
               deadline: nextDeadline,
               isReallocated: true
             },
-            include: { assignee: true }
+            include: {
+              assignee: {
+                select: { id: true, name: true, accumulatedPoints: true, creditScore: true }
+              }
+            }
           })
         )
       );

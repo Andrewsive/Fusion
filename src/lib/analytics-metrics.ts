@@ -1,16 +1,21 @@
 import type { DashboardTask } from "@/lib/types";
 
-/** 雷达图六轴标签（与计算顺序一致） */
 export const ANALYTICS_METRIC_LABELS = [
-  "任务完成率",
+  "任务质量",
   "工作量达成",
-  "信用分",
-  "积分贡献",
-  "协作活跃",
-  "时效与责任"
+  "过程投入",
+  "协作贡献",
+  "时效责任",
+  "信用记录"
 ] as const;
 
+const WEIGHTS = [0.25, 0.2, 0.15, 0.15, 0.15, 0.1] as const;
+
+type RiskGrade = "NORMAL" | "LATE" | "CRITICAL" | "REALLOCATED" | "REFUSED";
+
 export type AnalyticsLog = {
+  actionType?: string;
+  description?: string;
   createdAt: string;
   user: { id: string };
 };
@@ -19,100 +24,160 @@ function clampScore(n: number): number {
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-function teamBaselineCompletion(tasks: DashboardTask[]): number {
-  const assigned = tasks.filter((t) => t.assignee);
-  if (!assigned.length) return 60;
-  const done = assigned.filter((t) => t.status === "DONE").length;
-  return (done / assigned.length) * 100;
+function ratio(numerator: number, denominator: number, fallback: number): number {
+  if (denominator <= 0) return fallback;
+  return (numerator / denominator) * 100;
 }
 
-function workloadTimelinessScore(task: DashboardTask): number {
-  if (task.status === "REALLOCATED") return 22;
-  if (task.status === "DONE") return 95;
-  if (task.warningLevel === "CRITICAL") return 38;
-  if (task.warningLevel === "WARNING") return 62;
-  return 88;
+function overdueRatio(task: DashboardTask, nowMs: number): number {
+  const deadlineMs = new Date(task.deadline).getTime();
+  if (Number.isNaN(deadlineMs)) return 0;
+  const createdMs = new Date(task.createdAt ?? task.deadline).getTime();
+  const baselineDurationMs = 72 * 60 * 60 * 1000;
+  const totalDurationMs =
+    Number.isNaN(createdMs) ? baselineDurationMs : Math.max(deadlineMs - createdMs, baselineDurationMs);
+  const overdueMs = Math.max(0, nowMs - deadlineMs);
+  return overdueMs / totalDurationMs;
 }
 
-/**
- * 六维分数 0–100，均来自当前项目的任务、积分与操作日志。
- */
-export function computeMemberRadarDimensions(
-  memberId: string,
-  member: { creditScore: number; accumulatedPoints: number },
-  tasks: DashboardTask[],
-  logs: AnalyticsLog[],
-  teamMaxAccumulatedPoints: number,
-  baselineCompletion: number
-): number[] {
-  const assigned = tasks.filter((t) => t.assignee?.id === memberId);
-  const doneList = assigned.filter((t) => t.status === "DONE");
-  const assignedPts = assigned.reduce((s, t) => s + t.workloadPoints, 0);
-  const donePts = doneList.reduce((s, t) => s + t.workloadPoints, 0);
+function computeTaskQuality(memberId: string, tasks: DashboardTask[], logs: AnalyticsLog[]): number {
+  const mine = tasks.filter((t) => t.assignee?.id === memberId);
+  if (!mine.length) return 82;
 
-  const completionRate =
-    assigned.length > 0 ? (doneList.length / assigned.length) * 100 : baselineCompletion;
+  const done = mine.filter((t) => t.status === "DONE");
+  const completion = ratio(done.length, mine.length, 60);
 
-  const workloadRate =
-    assignedPts > 0 ? (donePts / assignedPts) * 100 : baselineCompletion;
+  const mineLogs = logs.filter((l) => l.user.id === memberId);
+  const positiveSignals = mineLogs.filter((l) => {
+    const t = (l.actionType || "").toUpperCase();
+    const d = (l.description || "").toUpperCase();
+    return (
+      t.includes("APPROVE") ||
+      t.includes("PASS") ||
+      t.includes("ACCEPT") ||
+      t.includes("MERGE") ||
+      d.includes("通过") ||
+      d.includes("采纳")
+    );
+  }).length;
 
-  const credit = member.creditScore;
+  const negativeSignals = mineLogs.filter((l) => {
+    const t = (l.actionType || "").toUpperCase();
+    const d = (l.description || "").toUpperCase();
+    return (
+      t.includes("REJECT") ||
+      t.includes("REWORK") ||
+      t.includes("ROLLBACK") ||
+      t.includes("BUG") ||
+      d.includes("驳回") ||
+      d.includes("返工") ||
+      d.includes("缺陷")
+    );
+  }).length;
 
-  const pointsNorm =
-    teamMaxAccumulatedPoints > 0
-      ? (member.accumulatedPoints / teamMaxAccumulatedPoints) * 100
-      : member.accumulatedPoints > 0
-        ? 100
-        : 35;
+  const qualityCore = clampScore(82 + positiveSignals * 4 - negativeSignals * 7);
+  return clampScore(completion * 0.3 + qualityCore * 0.7);
+}
 
-  const myLogs = logs.filter((l) => l.user.id === memberId);
-  const activity = clampScore(12 + myLogs.length * 6);
+function computeWorkload(memberId: string, tasks: DashboardTask[]): number {
+  const mine = tasks.filter((t) => t.assignee?.id === memberId);
+  const assignedPts = mine.reduce((sum, t) => sum + t.workloadPoints, 0);
+  const donePts = mine
+    .filter((t) => t.status === "DONE")
+    .reduce((sum, t) => sum + t.workloadPoints, 0);
+  const teamAssignedPts = tasks.reduce((sum, t) => sum + t.workloadPoints, 0);
+  const teamDonePts = tasks
+    .filter((t) => t.status === "DONE")
+    .reduce((sum, t) => sum + t.workloadPoints, 0);
+  const fallback = Math.max(78, ratio(teamDonePts, teamAssignedPts, 78));
+  return clampScore(ratio(donePts, assignedPts, fallback));
+}
 
-  const incomplete = assigned.filter((t) => t.status !== "DONE");
-  const timeliness =
-    incomplete.length > 0
-      ? incomplete.reduce((sum, t) => sum + workloadTimelinessScore(t), 0) / incomplete.length
-      : assigned.some((t) => t.status === "DONE")
-        ? 92
-        : baselineCompletion;
+function computeProcessInput(memberId: string, logs: AnalyticsLog[]): number {
+  const mine = logs.filter((l) => l.user.id === memberId);
+  const iterations = mine.filter((l) => {
+    const t = (l.actionType || "").toUpperCase();
+    return t.includes("AI") || t.includes("EDIT") || t.includes("UPDATE") || t.includes("SUBMIT");
+  }).length;
 
-  return [
-    clampScore(completionRate),
-    clampScore(workloadRate),
-    clampScore(credit),
-    clampScore(pointsNorm),
-    activity,
-    clampScore(timeliness)
-  ];
+  const base = clampScore(62 + iterations * 7);
+  const hasZeroShotSignal = mine.length > 0 && iterations <= 1;
+  return hasZeroShotSignal ? Math.min(base, 60) : base;
+}
+
+function computeCollaboration(memberId: string, tasks: DashboardTask[], logs: AnalyticsLog[]): number {
+  const mineLogs = logs.filter((l) => l.user.id === memberId);
+  const reviewLike = mineLogs.filter((l) => {
+    const t = (l.actionType || "").toUpperCase();
+    return t.includes("REVIEW") || t.includes("COMMENT") || t.includes("SYNC");
+  }).length;
+
+  const rescueDone = tasks.filter(
+    (t) => t.assignee?.id === memberId && t.isReallocated && t.status === "DONE"
+  ).length;
+
+  return clampScore(60 + reviewLike * 6 + rescueDone * 18);
+}
+
+function overdueScoreByRatio(ratioValue: number): number {
+  if (ratioValue <= 0) return 100;
+  if (ratioValue <= 0.1) return 80;
+  if (ratioValue <= 0.25) return 65;
+  if (ratioValue <= 0.5) return 45;
+  if (ratioValue <= 1) return 30;
+  return 20;
+}
+
+function computeTimeliness(memberId: string, tasks: DashboardTask[], nowMs: number): number {
+  const mine = tasks.filter((t) => t.assignee?.id === memberId);
+  if (!mine.length) return 85;
+
+  const perTask = mine.map((task) => {
+    if (task.status === "REALLOCATED") return 20;
+    if (task.status === "DONE") return 100;
+
+    // 未完成任务：仅按逾期占比扣分（不再按 WARNING/CRITICAL 分档）
+    return overdueScoreByRatio(overdueRatio(task, nowMs));
+  });
+
+  let score = perTask.reduce((sum, s) => sum + s, 0) / perTask.length;
+
+  // 只要出现被接管，时效责任分再额外下压，确保这是最重信号
+  if (mine.some((t) => t.status === "REALLOCATED")) {
+    score = Math.min(score, 25);
+  }
+
+  return clampScore(score);
+}
+
+function computeCredit(member: { creditScore: number }): number {
+  return clampScore(member.creditScore);
 }
 
 function inferMemberRole(
   memberId: string,
   tasks: DashboardTask[],
   logs: AnalyticsLog[],
-  memberIndex: number,
-  maxAssignedWorkload: number
+  memberIndex: number
 ): string {
   const myLoad = tasks
     .filter((t) => t.assignee?.id === memberId)
     .reduce((s, t) => s + t.workloadPoints, 0);
-  if (maxAssignedWorkload > 0 && myLoad === maxAssignedWorkload) {
-    return "主力承担";
+  const loadByMember = new Map<string, number>();
+  for (const task of tasks) {
+    const id = task.assignee?.id;
+    if (!id) continue;
+    loadByMember.set(id, (loadByMember.get(id) ?? 0) + task.workloadPoints);
   }
-  const myLogCount = logs.filter((l) => l.user.id === memberId).length;
-  const logCounts = new Map<string, number>();
-  for (const l of logs) {
-    logCounts.set(l.user.id, (logCounts.get(l.user.id) ?? 0) + 1);
-  }
-  const maxLogs = Math.max(1, ...logCounts.values());
-  if (myLogCount >= maxLogs && myLogCount >= 3) {
-    return "协同活跃";
-  }
+  const maxLoad = Math.max(1, ...Array.from(loadByMember.values()));
+  if (myLoad >= maxLoad) return "主力承担";
+
+  const myLogs = logs.filter((l) => l.user.id === memberId).length;
+  if (myLogs >= 4) return "协作活跃";
   return ["项目协同", "执行成员", "支持角色"][memberIndex % 3];
 }
 
-/** 根据近 7 天与更早的日志条数对比估算趋势（-10～10） */
-export function computeActivityTrendPct(memberId: string, logs: AnalyticsLog[], nowMs: number): number {
+function computeActivityTrendPct(memberId: string, logs: AnalyticsLog[], nowMs: number): number {
   const mine = logs.filter((l) => l.user.id === memberId);
   if (mine.length < 2) return 0;
 
@@ -131,6 +196,63 @@ export function computeActivityTrendPct(memberId: string, logs: AnalyticsLog[], 
   return Math.max(-10, Math.min(10, Number(raw.toFixed(1))));
 }
 
+function detectRiskGrade(memberId: string, tasks: DashboardTask[], logs: AnalyticsLog[]): RiskGrade {
+  const mine = tasks.filter((t) => t.assignee?.id === memberId);
+  const hasRefused = logs.some((l) => {
+    if (l.user.id !== memberId) return false;
+    const t = (l.actionType || "").toUpperCase();
+    const d = (l.description || "").toUpperCase();
+    return t.includes("REFUSE") || d.includes("拒绝");
+  });
+  if (hasRefused) return "REFUSED";
+  if (mine.some((t) => t.status === "REALLOCATED")) return "REALLOCATED";
+
+  const nowMs = Date.now();
+  const maxOverdueRatio = mine
+    .filter((t) => t.status !== "DONE" && t.status !== "REALLOCATED")
+    .reduce((max, t) => Math.max(max, overdueRatio(t, nowMs)), 0);
+  if (maxOverdueRatio >= 0.5) return "CRITICAL";
+  if (maxOverdueRatio > 0) return "LATE";
+  return "NORMAL";
+}
+
+function riskCoefficient(grade: RiskGrade): number {
+  switch (grade) {
+    case "LATE":
+      return 0.85;
+    case "CRITICAL":
+      return 0.6;
+    case "REALLOCATED":
+      return 0.35;
+    case "REFUSED":
+      return 0.2;
+    default:
+      return 1;
+  }
+}
+
+function violationPenalty(memberId: string, grade: RiskGrade, tasks: DashboardTask[], logs: AnalyticsLog[]): number {
+  const mine = tasks.filter((t) => t.assignee?.id === memberId);
+  const nowMs = Date.now();
+  const overdueUndone = mine.filter(
+    (t) => t.status !== "DONE" && t.status !== "REALLOCATED" && overdueRatio(t, nowMs) > 0
+  ).length;
+  const seriousUndone = mine.filter(
+    (t) => t.status !== "DONE" && t.status !== "REALLOCATED" && overdueRatio(t, nowMs) >= 0.5
+  ).length;
+  const reallocated = mine.filter((t) => t.status === "REALLOCATED").length;
+  const refusedCount =
+    grade === "REFUSED"
+      ? logs.filter((l) => {
+          const t = (l.actionType || "").toUpperCase();
+          const d = (l.description || "").toUpperCase();
+          return l.user.id === memberId && (t.includes("REFUSE") || d.includes("拒绝"));
+        }).length || 1
+      : 0;
+
+  return overdueUndone * 8 + seriousUndone * 12 + reallocated * 20 + refusedCount * 25;
+}
+
 export type AnalyticsMemberInput = {
   id: string;
   name: string;
@@ -146,6 +268,10 @@ export type AnalyticsProfile = {
   totalScore: number;
   trendPct: number;
   dimensions: number[];
+  weightedBaseScore: number;
+  riskCoefficient: number;
+  penalty: number;
+  riskGrade: RiskGrade;
 };
 
 export function buildAnalyticsProfiles(
@@ -154,31 +280,28 @@ export function buildAnalyticsProfiles(
   logs: AnalyticsLog[],
   nowMs: number = Date.now()
 ): AnalyticsProfile[] {
-  const baseline = teamBaselineCompletion(tasks);
-  const teamMaxPts = Math.max(0, ...members.map((m) => m.accumulatedPoints));
-
-  const maxAssignedWorkload = Math.max(
-    0,
-    ...members.map((m) =>
-      tasks.filter((t) => t.assignee?.id === m.id).reduce((s, t) => s + t.workloadPoints, 0)
-    )
-  );
-
   return members.map((member, index) => {
-    const dimensions = computeMemberRadarDimensions(
-      member.id,
-      member,
-      tasks,
-      logs,
-      teamMaxPts,
-      baseline
-    );
-    const totalScore = Math.round(dimensions.reduce((a, b) => a + b, 0) / dimensions.length);
+    const dimensions = [
+      computeTaskQuality(member.id, tasks, logs),
+      computeWorkload(member.id, tasks),
+      computeProcessInput(member.id, logs),
+      computeCollaboration(member.id, tasks, logs),
+      computeTimeliness(member.id, tasks, nowMs),
+      computeCredit(member)
+    ];
+
+    const weightedBaseScore = dimensions.reduce((sum, score, idx) => sum + score * WEIGHTS[idx], 0);
+    const riskGrade = detectRiskGrade(member.id, tasks, logs);
+    const risk = riskCoefficient(riskGrade);
+    const penalty = violationPenalty(member.id, riskGrade, tasks, logs);
+    const encouragementBoost = riskGrade === "NORMAL" ? 8 : riskGrade === "LATE" ? 4 : 0;
+    const totalScore = clampScore(weightedBaseScore * risk - penalty + encouragementBoost);
     const trendPct = computeActivityTrendPct(member.id, logs, nowMs);
+
     const role =
       member.projectRole === "OWNER"
         ? "队长 · 项目协调"
-        : inferMemberRole(member.id, tasks, logs, index, maxAssignedWorkload);
+        : inferMemberRole(member.id, tasks, logs, index);
 
     return {
       id: member.id,
@@ -186,7 +309,11 @@ export function buildAnalyticsProfiles(
       role,
       totalScore,
       trendPct,
-      dimensions
+      dimensions,
+      weightedBaseScore: Number(weightedBaseScore.toFixed(1)),
+      riskCoefficient: risk,
+      penalty,
+      riskGrade
     };
   });
 }

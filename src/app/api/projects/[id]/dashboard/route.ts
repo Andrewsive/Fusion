@@ -4,7 +4,6 @@ import { getWarningLevel } from "@/lib/warning";
 import { requireProjectMember } from "@/lib/auth";
 import { ensureDefaultProjectDocuments } from "@/lib/project-documents";
 import { toPublicUser } from "@/lib/user-serialize";
-import { parseAssignmentMilestones, sortMilestonesByDue } from "@/lib/assignment-milestones";
 import { runDeadlineUltimatumEngine } from "@/lib/deadline-ultimatum";
 
 function parseKeyDeliverables(raw: string | null | undefined): string[] | null {
@@ -31,12 +30,47 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     }
 
     const [project, members, tasks, logs] = await Promise.all([
-      prisma.project.findUnique({ where: { id } }),
-      prisma.projectMember.findMany({ where: { projectId: id }, include: { user: true } }),
-      prisma.task.findMany({ where: { projectId: id }, include: { assignee: true }, orderBy: { createdAt: "asc" } }),
+      prisma.project.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          title: true,
+          contextSummary: true,
+          status: true,
+          deadline: true,
+          inviteCode: true
+        }
+      }),
+      prisma.projectMember.findMany({
+        where: { projectId: id },
+        include: {
+          user: {
+            select: { id: true, name: true, accumulatedPoints: true, creditScore: true }
+          }
+        }
+      }),
+      prisma.task.findMany({
+        where: { projectId: id },
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          workloadPoints: true,
+          createdAt: true,
+          deadline: true,
+          assignee: {
+            select: { id: true, name: true, accumulatedPoints: true, creditScore: true }
+          }
+        },
+        orderBy: { createdAt: "asc" }
+      }),
       prisma.actionLog.findMany({
         where: { projectId: id },
-        include: { user: true },
+        include: {
+          user: {
+            select: { id: true, name: true, accumulatedPoints: true, creditScore: true }
+          }
+        },
         orderBy: { createdAt: "desc" },
         take: 30
       })
@@ -50,27 +84,23 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       return NextResponse.json({ error: "Project has no members" }, { status: 403 });
     }
 
-    const tasksWithWarning = tasks.map((task: any) => ({
-      ...task,
-      warningLevel: getWarningLevel(task.deadline)
-    }));
-
-    await prisma.$transaction(
-      tasksWithWarning.map((task: any) =>
-        prisma.task.update({
-          where: { id: task.id },
-          data: { warningLevel: task.warningLevel }
-        })
-      )
-    );
-
     if (meId) {
       await runDeadlineUltimatumEngine(id).catch((err) => console.error("deadline ultimatum", err));
     }
 
     const tasksLatest = await prisma.task.findMany({
       where: { projectId: id },
-      include: { assignee: true },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        workloadPoints: true,
+        createdAt: true,
+        deadline: true,
+        assignee: {
+          select: { id: true, name: true, accumulatedPoints: true, creditScore: true }
+        }
+      },
       orderBy: { createdAt: "asc" }
     });
 
@@ -91,25 +121,25 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     const isOwner = myMembership?.role === "OWNER";
     const isGuest = meId === null;
 
-    const { keyDeliverables: rawDeliverables, assignmentMilestones: rawMilestones, ...projectRest } = project;
-
-    const milestonesSorted = (() => {
-      const list = parseAssignmentMilestones(rawMilestones);
-      return list ? sortMilestonesByDue(list) : null;
-    })();
+    const rawDeliverables: string | null = null;
+    const rawMilestones: string | null = null;
+    const projectRest = project;
+    const milestonesSorted = null;
 
     const publicMembers = members.map((m) => ({
       ...toPublicUser(m.user),
       role: m.role
     }));
-    const publicMe = me ? toPublicUser(me, { includeEmail: true }) : null;
+    const publicMe = me ? toPublicUser(me) : null;
     const publicLogs = logs.map((log) => ({
       ...log,
       user: toPublicUser(log.user)
     }));
     const publicTasks = tasksLatest.map((task: any) => ({
       ...task,
+      sourceLabel: task.sourceLabel ?? null,
       warningLevel: getWarningLevel(task.deadline),
+      isReallocated: task.isReallocated ?? false,
       assignee: task.assignee ? toPublicUser(task.assignee) : null
     }));
 

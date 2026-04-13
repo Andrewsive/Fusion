@@ -9,6 +9,7 @@ export type DashboardTask = {
   sourceLabel?: string | null;
   status: TaskStatus;
   workloadPoints: number;
+  createdAt?: string;
   deadline: string;
   warningLevel: WarningLevel;
   ultimatumLevel?: TaskUltimatumLevel;
