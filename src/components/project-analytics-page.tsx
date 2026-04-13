@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Download } from "lucide-react";
 
 import { TopNav } from "@/components/top-nav";
 import { ProjectHero } from "@/components/project-hero";
@@ -276,7 +276,7 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
           title="协作平台成员贡献统计"
           subtitle="采用 6 维雷达评分，最终分按「加权基础分 × 责任系数 - 违规惩罚」计算，拖欠DDL或拒绝任务将显著拉低最终分。"
         />
-        <div className="mb-6">
+        <div className="mb-6 flex flex-wrap items-center gap-3">
           <Link
             href={`/project/${projectId}`}
             className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
@@ -284,6 +284,13 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
             <ArrowLeft className="h-4 w-4" />
             返回主界面
           </Link>
+          <a
+            href={`/api/projects/${projectId}/analytics-export`}
+            className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+          >
+            <Download className="h-4 w-4" />
+            一键导出贡献度 PDF
+          </a>
         </div>
 
         <section className="mb-6 rounded-2xl bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
