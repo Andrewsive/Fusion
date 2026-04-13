@@ -36,8 +36,41 @@ npm run db:reset
 
 ## 公网部署
 
-- **SQLite 单容器（简单）**：构建本仓库 `Dockerfile`，挂载卷持久化 `/app/data`，入口脚本会执行 `prisma migrate deploy` 后 `next start`。
-- **PostgreSQL（推荐正式环境）**：使用 Neon / Supabase / RDS 等，在部署平台配置 `DATABASE_URL`；需将 `schema.prisma` 的 `provider` 改为 `postgresql` 并用 `prisma migrate diff` 生成对应迁移（勿与 SQLite 迁移混用同一 history）。`docker-compose.yml` 中的 `db` 服务仅作可选本地 Postgres。
+目标：让任意人在浏览器里打开你的站点即可注册、建项目、用 AI（需你配置好 LLM 密钥）。
+
+**想更少运维**：可用 **Sealos** 等托管平台，网页里填镜像 + 持久卷即可，见 **`docs/sealos-deploy.md`**。
+
+### 方案 A：Docker 单容器 + SQLite（最快上线）
+
+仓库根目录 `Dockerfile` 已配置：`DATABASE_URL=file:/app/data/dev.db`、`UPLOAD_DIR=/app/data/uploads`，启动时执行 `prisma migrate deploy` 再 `next start`。
+
+1. 准备一台有公网 IP 的机器（云厂商轻量应用服务器、VPS 等）或使用 **Railway / Fly.io / Render** 等支持 **Docker + 持久卷** 的平台。
+2. 构建并运行（示例，按平台改端口/卷名）：
+
+```bash
+docker build -t fusion .
+docker run -d --name fusion -p 3000:3000 \
+  -v fusion_data:/app/data \
+  -e OPENAI_API_KEY=... \
+  -e OPENAI_BASE_URL=... \
+  -e OPENAI_MODEL=... \
+  -e NEXT_PUBLIC_APP_URL=https://你的域名 \
+  fusion
+```
+
+3. **必须挂卷**：把宿主或平台的卷挂载到容器内 **`/app/data`**，否则重启后数据库与上传文件都会丢。
+4. 在平台「环境变量 / Secrets」中填写 `.env.example` 里你实际用到的项（至少：LLM 相关；若用邮件通知再配 `NEXT_PUBLIC_APP_URL` 与 Resend/SMTP）。
+5. 前面板 / 负载均衡把 **HTTPS** 指到容器的 `3000`（或平台分配的端口）。
+
+**安全提示**：公测阶段任何人可注册；正式对外前请评估是否需要邀请制、验证码或访问控制。
+
+### 方案 B：Vercel 等 Serverless
+
+默认 **SQLite + 本地 `uploads/`** 不适合无状态部署（文件系统不可依赖）。若要坚持 Vercel：需 **PostgreSQL**（如 Neon）+ **对象存储**（如 S3/R2）并改上传逻辑，工作量较大；更省事请用方案 A。
+
+### 方案 C：PostgreSQL（长期正式环境）
+
+使用 Neon / Supabase / RDS 等，在部署平台配置 `DATABASE_URL`；将 `schema.prisma` 的 `provider` 改为 `postgresql`，用 `prisma migrate diff` 生成 Postgres 迁移（勿与 SQLite 迁移混用同一 history）。`docker-compose.yml` 里的 `db` 仅供本地开发。
 
 ## Key API Routes
 
