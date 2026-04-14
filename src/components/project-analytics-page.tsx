@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft, Download } from "lucide-react";
+import { ArrowLeft, Download, MessageSquarePlus, X } from "lucide-react";
 
 import { TopNav } from "@/components/top-nav";
 import { ProjectHero } from "@/components/project-hero";
@@ -13,13 +13,25 @@ import { ProjectAiChatPanel } from "@/components/project-ai-chat-panel";
 import { ANALYTICS_METRIC_LABELS, buildAnalyticsProfiles } from "@/lib/analytics-metrics";
 import type { AnalyticsProfile } from "@/lib/analytics-metrics";
 
+type AppealLogItem = {
+  id: string;
+  createdAt: string;
+  memberName: string;
+  scoreType: "TOTAL" | "DIMENSION";
+  expectedScore: number | null;
+  dimensionName: string | null;
+  reason: string;
+  evidence: string | null;
+};
+
 const FALLBACK_NAMES = ["队长", "小明", "小红", "李华", "成员E", "成员F", "成员G", "成员H"];
 const METRIC_WEIGHTS = ["25%", "20%", "15%", "15%", "15%", "10%"];
+
 const SCORE_RULE_ITEMS = [
   {
     label: "任务质量",
     weight: "25%",
-    description: "聚焦产出质量：可用性、逻辑完整性、评审通过/返工情况",
+    description: "产出可用性、逻辑完整性、评审通过率与返工情况",
     source: "Task.status + ActionLog.actionType + ActionLog.description"
   },
   {
@@ -31,26 +43,26 @@ const SCORE_RULE_ITEMS = [
   {
     label: "过程投入",
     weight: "15%",
-    description: "AI迭代、编辑与提交过程深度；zero-shot 行为降权",
+    description: "AI 迭代、编辑与提交过程深度；zero-shot 行为降权",
     source: "ActionLog.actionType + ActionLog.description"
   },
   {
     label: "协作贡献",
     weight: "15%",
-    description: "评审支持、跨任务协作、救火接管完成",
+    description: "评审支持、跨任务协作、接管后救火完成情况",
     source: "ActionLog + Task.isReallocated + Task.status"
   },
   {
     label: "时效责任",
     weight: "15%",
     description:
-      "仅按逾期占比扣分（逾期时长 / 任务总时长）：0%=100；(0,10%]=80；(10%,25%]=65；(25%,50%]=45；(50%,100%]=30；>100%=20；被接管任务按最重记 20。",
+      "按逾期占比扣分（逾期时长/任务总时长）：0%=100，(0,10%]=80，(10%,25%]=65，(25%,50%]=45，(50%,100%]=30，>100%=20；接管任务按最重 20",
     source: "Task.warningLevel + Task.status"
   },
   {
     label: "信用记录",
     weight: "10%",
-    description: "成员长期履约信誉分（默认100），按时完成与有效协作可维持或小幅提升；逾期、被催告无响应、被接管、拒绝任务会扣分。",
+    description: "成员长期履约信用分（默认 100），受逾期/接管/拒绝等机制影响",
     source: "User.creditScore"
   }
 ] as const;
@@ -61,30 +73,10 @@ const SHOWCASE_PROFILE_PRESET: Array<{
   trendPct: number;
   dimensions: number[];
 }> = [
-  {
-    name: "队长",
-    role: "项目协调",
-    trendPct: 2.2,
-    dimensions: [96, 95, 92, 94, 100, 98]
-  },
-  {
-    name: "小明",
-    role: "后端开发",
-    trendPct: 1.8,
-    dimensions: [92, 93, 88, 90, 100, 96]
-  },
-  {
-    name: "小红",
-    role: "前端开发",
-    trendPct: 1.5,
-    dimensions: [90, 91, 85, 88, 100, 95]
-  },
-  {
-    name: "李华",
-    role: "产品与文档",
-    trendPct: 1.1,
-    dimensions: [88, 90, 82, 86, 100, 94]
-  }
+  { name: "队长", role: "项目协调", trendPct: 2.2, dimensions: [96, 95, 92, 94, 100, 98] },
+  { name: "小明", role: "后端开发", trendPct: 1.8, dimensions: [92, 93, 88, 90, 100, 96] },
+  { name: "小红", role: "前端开发", trendPct: 1.5, dimensions: [90, 91, 85, 88, 100, 95] },
+  { name: "李华", role: "产品与文档", trendPct: 1.1, dimensions: [88, 90, 82, 86, 100, 94] }
 ];
 
 function weightedBaseScore(dimensions: number[]) {
@@ -111,9 +103,36 @@ function buildShowcaseProfiles(base: AnalyticsProfile[]): AnalyticsProfile[] {
   });
 }
 
+function parseAppealLogs(
+  logs: Array<{ id: string; actionType: string; description: string; createdAt: string; user: { name: string } }>
+): AppealLogItem[] {
+  return logs
+    .filter((log) => log.actionType === "ANALYTICS_APPEAL_SUBMITTED")
+    .map((log) => {
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = JSON.parse(log.description || "{}") as Record<string, unknown>;
+      } catch {
+        payload = {};
+      }
+
+      return {
+        id: log.id,
+        createdAt: log.createdAt,
+        memberName: log.user?.name || "成员",
+        scoreType: payload.scoreType === "DIMENSION" ? "DIMENSION" : "TOTAL",
+        expectedScore: typeof payload.expectedScore === "number" ? payload.expectedScore : null,
+        dimensionName: typeof payload.dimensionName === "string" ? payload.dimensionName : null,
+        reason: typeof payload.reason === "string" ? payload.reason : "未填写",
+        evidence: typeof payload.evidence === "string" ? payload.evidence : null
+      };
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
 function normalizeName(rawName: string, index: number) {
   const normalized = (rawName || "").trim();
-  if (!normalized || /^\?+$/.test(normalized) || normalized.includes("�")) {
+  if (!normalized || /^\?+$/.test(normalized) || normalized.includes("锟")) {
     return FALLBACK_NAMES[index] ?? `成员${index + 1}`;
   }
   return normalized;
@@ -211,8 +230,17 @@ function riskLabel(risk: string) {
 
 export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
   const searchParams = useSearchParams();
-  const { data, error } = useProjectDashboard(projectId);
+  const { data, error, refresh } = useProjectDashboard(projectId);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [appealOpen, setAppealOpen] = useState(false);
+  const [appealType, setAppealType] = useState<"TOTAL" | "DIMENSION">("TOTAL");
+  const [appealDimension, setAppealDimension] = useState("任务质量");
+  const [appealExpectedScore, setAppealExpectedScore] = useState("");
+  const [appealReason, setAppealReason] = useState("");
+  const [appealEvidence, setAppealEvidence] = useState("");
+  const [appealSubmitting, setAppealSubmitting] = useState(false);
+  const [appealError, setAppealError] = useState<string | null>(null);
+  const [appealSuccess, setAppealSuccess] = useState<string | null>(null);
   const syncedUrlMemberKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -251,6 +279,7 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
     (a, b) => b.totalScore - a.totalScore
   );
   const profiles = projectId === "demo" ? buildShowcaseProfiles(computedProfiles) : computedProfiles;
+  const appealLogs = parseAppealLogs(data.logs).slice(0, 8);
 
   const teamAverage = ANALYTICS_METRIC_LABELS.map((_, index) =>
     Math.round(profiles.reduce((sum, profile) => sum + profile.dimensions[index], 0) / Math.max(profiles.length, 1))
@@ -263,9 +292,59 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
   const overallTrend = Number(
     (profiles.reduce((sum, profile) => sum + profile.trendPct, 0) / Math.max(profiles.length, 1)).toFixed(1)
   );
-  const activeDimensionAverage = activeProfile
-    ? Math.round(activeProfile.dimensions.reduce((sum, dim) => sum + dim, 0) / activeProfile.dimensions.length)
-    : null;
+  const canSubmitAppeal = !data.isGuest && Boolean(data.me);
+
+  async function submitAppeal() {
+    if (!canSubmitAppeal) {
+      setAppealError("请先以项目成员身份进入后再提交申诉。");
+      return;
+    }
+    if (appealReason.trim().length < 8) {
+      setAppealError("申诉理由至少 8 个字。");
+      setAppealSuccess(null);
+      return;
+    }
+
+    const parsedExpectedScore =
+      appealExpectedScore.trim().length > 0 ? Number.parseInt(appealExpectedScore.trim(), 10) : undefined;
+    if (parsedExpectedScore != null && (Number.isNaN(parsedExpectedScore) || parsedExpectedScore < 0 || parsedExpectedScore > 100)) {
+      setAppealError("期望分数必须是 0-100 的整数。");
+      setAppealSuccess(null);
+      return;
+    }
+
+    setAppealSubmitting(true);
+    setAppealError(null);
+    setAppealSuccess(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/appeals`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scoreType: appealType,
+          dimensionName: appealType === "DIMENSION" ? appealDimension : undefined,
+          expectedScore: parsedExpectedScore,
+          reason: appealReason.trim(),
+          evidence: appealEvidence.trim()
+        })
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload.error || "提交失败");
+      }
+
+      setAppealSuccess("申诉已提交，组长将收到提醒。");
+      setAppealReason("");
+      setAppealEvidence("");
+      setAppealExpectedScore("");
+      setAppealOpen(false);
+      await refresh();
+    } catch (err) {
+      setAppealError(err instanceof Error ? err.message : "提交失败");
+    } finally {
+      setAppealSubmitting(false);
+    }
+  }
 
   return (
     <main className="min-h-screen bg-[#f8f9fa]">
@@ -274,12 +353,13 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
         <ProjectHero
           project={data.project}
           title="协作平台成员贡献统计"
-          subtitle="采用 6 维雷达评分，最终分按「加权基础分 × 责任系数 - 违规惩罚」计算，拖欠DDL或拒绝任务将显著拉低最终分。"
+          subtitle="采用 6 维雷达评分，最终分按「加权基础分 × 责任系数 - 违规惩罚」计算，拖欠 DDL 或拒绝任务将显著拉低最终分。"
         />
+
         <div className="mb-6 flex flex-wrap items-center gap-3">
           <Link
             href={`/project/${projectId}`}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <ArrowLeft className="h-4 w-4" />
             返回主界面
@@ -291,6 +371,21 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
             <Download className="h-4 w-4" />
             一键导出贡献度 PDF
           </a>
+          <button
+            type="button"
+            onClick={() => {
+              setAppealError(null);
+              setAppealSuccess(null);
+              if (!canSubmitAppeal) {
+                setAppealError("当前为访客模式，请先以项目成员身份进入后再提交申诉。");
+              }
+              setAppealOpen(true);
+            }}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+            提交评分申诉
+          </button>
         </div>
 
         <section className="mb-6 rounded-2xl bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
@@ -323,13 +418,10 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
             <div>
               <h2 className="text-lg font-semibold text-slate-900">贡献度评分规则</h2>
               <p className="mt-1 text-sm text-slate-600">
-                最终分 = 加权基础分 × 责任系数 - 违规惩罚。责任系数：正常 1.00 / 轻微逾期 0.85 / 严重逾期 0.60 /
-                被接管 0.35 / 拒绝任务 0.20。
+                最终分 = 加权基础分 × 责任系数 - 违规惩罚。责任系数：正常 1.00 / 轻微逾期 0.85 / 严重逾期 0.60 / 任务被接管 0.35 / 拒绝任务 0.20。
               </p>
             </div>
-            <div className="rounded-full bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
-              数据每 15 秒自动刷新
-            </div>
+            <div className="rounded-full bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">数据每 15 秒自动刷新</div>
           </div>
 
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -337,47 +429,13 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
               <div key={rule.label} className="rounded-xl border border-slate-200 bg-slate-50/50 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold text-slate-900">{rule.label}</div>
-                  <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-slate-600">
-                    权重 {rule.weight}
-                  </span>
+                  <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-slate-600">权重 {rule.weight}</span>
                 </div>
                 <p className="mt-1 text-xs leading-5 text-slate-600">{rule.description}</p>
                 <div className="mt-2 text-[11px] text-slate-500">数据源：{rule.source}</div>
               </div>
             ))}
           </div>
-
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              <div className="font-semibold">zero-shot 行为降权</div>
-              <p className="mt-1 text-xs leading-5 text-amber-900/90">
-                定义：单轮 AI 生成 + 极低人工修改 + 无二次约束，属于“无脑使用 AI 直出”情形。命中后“过程投入”维度上限降至 60，并触发最终分降权。
-              </p>
-            </div>
-            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
-              <div className="font-semibold">违规惩罚 P（额外扣分）</div>
-              <ul className="mt-1 space-y-1 text-xs leading-5">
-                <li>每次逾期未处理：+8</li>
-                <li>每次被催告后仍无响应：+12</li>
-                <li>每次被接管：+20</li>
-                <li>明确拒绝任务：+25</li>
-              </ul>
-              <p className="mt-2 text-[11px] leading-5 text-rose-900/90">
-                自动接管规则：当任务逾期占比达到 50% 且仍未完成时，进入自动再分配候选（默认转入公共池等待接管）。
-              </p>
-            </div>
-          </div>
-
-          {activeProfile && activeDimensionAverage !== null ? (
-            <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-900">
-              当前高亮成员 <span className="font-semibold">{activeProfile.name}</span>：
-              <span className="mx-1 font-mono">
-                基础分 {activeProfile.weightedBaseScore.toFixed(1)} × 责任系数 {activeProfile.riskCoefficient.toFixed(2)} - 违规惩罚{" "}
-                {activeProfile.penalty} = {activeProfile.totalScore}
-              </span>
-              （风险等级：{riskLabel(activeProfile.riskGrade)}）。
-            </div>
-          ) : null}
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[360px_1fr]">
@@ -414,7 +472,7 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
 
           <article className="rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
             <h2 className="mb-4 text-2xl font-semibold tracking-tight">全员细分维度雷达看板</h2>
-            <p className="mb-5 text-sm text-muted">虚线为团队该维度平均分，实线为个人得分。</p>
+            <p className="mb-5 text-sm text-muted">虚线为团队平均分，实线为个人得分。</p>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {profiles.map((profile) => (
                 <div
@@ -436,9 +494,11 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
                       </div>
                     </div>
                   </div>
+
                   <div className="flex justify-center">
                     <RadarChart values={profile.dimensions} average={teamAverage} />
                   </div>
+
                   <div className="mt-3 border-t border-slate-100 pt-3">
                     <div className="mb-2 text-xs font-medium text-slate-500">维度分数（用于基础分）</div>
                     <div className="grid grid-cols-2 gap-2">
@@ -469,20 +529,174 @@ export function ProjectAnalyticsPage({ projectId }: { projectId: string }) {
           </article>
         </section>
 
+        <section className="mt-6 rounded-2xl bg-white p-5 shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-lg font-semibold text-slate-900">评分申诉渠道</h3>
+            <button
+              type="button"
+              onClick={() => {
+                setAppealError(null);
+                setAppealSuccess(null);
+                if (!canSubmitAppeal) {
+                  setAppealError("当前为访客模式，请先以项目成员身份进入后再提交申诉。");
+                }
+                setAppealOpen(true);
+              }}
+              className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              发起申诉
+            </button>
+          </div>
+          <p className="mb-4 text-sm text-slate-600">
+            若你认为总分或某个维度评分存在偏差，可提交申诉。系统会通知组长复核，并保留申诉记录用于追踪处理。
+          </p>
+          {!canSubmitAppeal ? (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              当前为访客模式，仅可查看申诉记录；请以项目成员身份登录后发起申诉。
+            </div>
+          ) : null}
+          {appealSuccess ? (
+            <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              {appealSuccess}
+            </div>
+          ) : null}
+          {appealLogs.length ? (
+            <div className="space-y-2">
+              {appealLogs.map((appeal) => (
+                <div key={appeal.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                    <span>{appeal.memberName}</span>
+                    <span>{new Date(appeal.createdAt).toLocaleString()}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-slate-800">
+                    {appeal.scoreType === "TOTAL" ? "总分申诉" : `维度申诉：${appeal.dimensionName ?? "-"}`}
+                    {appeal.expectedScore != null ? `，期望分：${appeal.expectedScore}` : ""}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-700">理由：{appeal.reason}</div>
+                  {appeal.evidence ? <div className="mt-1 text-sm text-slate-600">补充证据：{appeal.evidence}</div> : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-300 px-3 py-4 text-sm text-slate-500">
+              暂无申诉记录。
+            </div>
+          )}
+        </section>
+
         {activeProfile ? (
           <section className="mt-6 rounded-2xl bg-white p-4 text-sm text-muted shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
-            当前高亮成员：<span className="font-medium text-slate-900">{activeProfile.name}</span>，
-            最终分 <span className="font-medium text-slate-900">{activeProfile.totalScore}</span>。
-            如触发「严重逾期 / 被接管 / 拒绝任务」，责任系数与惩罚项会显著降低最终分。
+            当前高亮成员：<span className="font-medium text-slate-900">{activeProfile.name}</span>，最终分
+            <span className="font-medium text-slate-900"> {activeProfile.totalScore}</span>。基础分 {activeProfile.weightedBaseScore.toFixed(1)} × 责任系数
+            {activeProfile.riskCoefficient.toFixed(2)} - 违规惩罚 {activeProfile.penalty}（风险等级：{riskLabel(activeProfile.riskGrade)}）。
           </section>
         ) : null}
       </div>
 
-      <ProjectAiChatPanel
-        projectId={projectId}
-        disabled={data.isGuest || !data.me}
-        currentUserName={data.me?.name}
-      />
+      {appealOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-900">提交贡献度评分申诉</h3>
+              <button
+                type="button"
+                onClick={() => setAppealOpen(false)}
+                className="rounded-full p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">申诉类型</label>
+                <select
+                  value={appealType}
+                  onChange={(e) => setAppealType(e.target.value as "TOTAL" | "DIMENSION")}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-blue-400"
+                >
+                  <option value="TOTAL">总分申诉</option>
+                  <option value="DIMENSION">维度申诉</option>
+                </select>
+              </div>
+
+              {appealType === "DIMENSION" ? (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">申诉维度</label>
+                  <select
+                    value={appealDimension}
+                    onChange={(e) => setAppealDimension(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-blue-400"
+                  >
+                    {ANALYTICS_METRIC_LABELS.map((label) => (
+                      <option key={label} value={label}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">期望分数（可选）</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={appealExpectedScore}
+                  onChange={(e) => setAppealExpectedScore(e.target.value)}
+                  placeholder="例如 92"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-blue-400"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">申诉理由</label>
+                <textarea
+                  value={appealReason}
+                  onChange={(e) => setAppealReason(e.target.value)}
+                  rows={4}
+                  placeholder="请写明你认为评分不合理的原因（至少 8 个字）"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-blue-400"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">补充证据（可选）</label>
+                <textarea
+                  value={appealEvidence}
+                  onChange={(e) => setAppealEvidence(e.target.value)}
+                  rows={2}
+                  placeholder="可填写任务链接、提交记录、评审意见等"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-blue-400"
+                />
+              </div>
+
+              {appealError ? <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{appealError}</div> : null}
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAppealOpen(false)}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={submitAppeal}
+                disabled={appealSubmitting}
+                className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {appealSubmitting ? "提交中..." : "提交申诉"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <ProjectAiChatPanel projectId={projectId} disabled={data.isGuest || !data.me} currentUserName={data.me?.name} />
     </main>
   );
 }
