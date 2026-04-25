@@ -77,7 +77,12 @@ export function AIMessagePanel({
         </button>
         <label className="cursor-pointer rounded-full border border-line px-3 py-1 text-sm hover:bg-slate-50">
           Upload file
-          <input type="file" className="hidden" accept=".txt,.md,.pdf,image/*" onChange={handleFileSelect} />
+          <input
+            type="file"
+            className="hidden"
+            accept=".txt,.md,.markdown,.pdf,.docx,.html,.htm,image/*"
+            onChange={handleFileSelect}
+          />
         </label>
       </div>
     </section>

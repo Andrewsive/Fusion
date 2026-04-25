@@ -9,7 +9,11 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
 
     const members = await prisma.projectMember.findMany({
       where: { projectId: id },
-      include: { user: true }
+      include: {
+        user: {
+          select: { id: true, name: true, accumulatedPoints: true, creditScore: true }
+        }
+      }
     });
 
     const ranking = members

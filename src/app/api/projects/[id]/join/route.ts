@@ -1,54 +1,33 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { cookies } from "next/headers";
 import { USER_COOKIE } from "@/lib/auth";
+import { sessionCookieOptions } from "@/lib/session-cookie";
+import { getRegisteredUserId } from "@/lib/require-registered-user";
+import { linkExistingUserToProject } from "@/lib/project-join";
 
-const joinSchema = z.object({
-  name: z.string().min(1)
-});
-
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const body = joinSchema.parse(await request.json());
     const { id } = await params;
 
-    const project = await prisma.project.findUnique({ where: { id } });
-    if (!project) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    const reg = await getRegisteredUserId();
+    if (reg.ok === false) {
+      if (reg.reason === "no_session") {
+        return NextResponse.json({ error: "请先登录或注册后再加入项目" }, { status: 401 });
+      }
+      return NextResponse.json({ error: "请使用已注册账号登录后再加入项目" }, { status: 403 });
     }
 
-    const user = await prisma.user.create({ data: { name: body.name } });
-
-    await prisma.projectMember.create({
-      data: {
-        projectId: id,
-        userId: user.id,
-        role: "MEMBER"
-      }
-    });
-
-    await prisma.actionLog.create({
-      data: {
-        projectId: id,
-        userId: user.id,
-        actionType: "MEMBER_JOINED",
-        description: `${user.name} joined via invite`
-      }
-    });
-
     const cookieStore = await cookies();
-    cookieStore.set(USER_COOKIE, user.id, {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/"
+    const result = await linkExistingUserToProject(reg.userId, id);
+    cookieStore.set(USER_COOKIE, result.userId, sessionCookieOptions());
+    return NextResponse.json({
+      projectId: result.projectId,
+      userId: result.userId,
+      alreadyMember: result.alreadyMember
     });
-
-    return NextResponse.json({ projectId: id, userId: user.id });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Join failed" },
-      { status: 400 }
-    );
+    const message = error instanceof Error ? error.message : "Join failed";
+    const status = message === "Project not found" ? 404 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }

@@ -2,7 +2,8 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { cookies } from "next/headers";
-import { USER_COOKIE } from "@/lib/auth";
+import { USER_COOKIE, getCurrentUserId } from "@/lib/auth";
+import { sessionCookieOptions } from "@/lib/session-cookie";
 
 const createProjectSchema = z.object({
   title: z.string().min(2),
@@ -19,10 +20,26 @@ function inviteCode(): string {
 export async function POST(request: NextRequest) {
   try {
     const body = createProjectSchema.parse(await request.json());
+    const sessionUserId = await getCurrentUserId();
+    if (!sessionUserId) {
+      return NextResponse.json({ error: "请先登录后再创建项目" }, { status: 401 });
+    }
+
+    const account = await prisma.user.findUnique({ where: { id: sessionUserId } });
+    if (!account?.email?.trim() || !account.passwordHash) {
+      return NextResponse.json(
+        {
+          error:
+            "创建项目需使用已注册账号。请先注册或登录；若当前仅为匿名加入身份，请先退出匿名会话后再登录。"
+        },
+        { status: 403 }
+      );
+    }
 
     const result = await prisma.$transaction(async (tx) => {
-      const owner = await tx.user.create({
-        data: { name: body.ownerName }
+      const owner = await tx.user.update({
+        where: { id: sessionUserId },
+        data: { name: body.ownerName.trim() }
       });
 
       const project = await tx.project.create({
@@ -65,11 +82,7 @@ export async function POST(request: NextRequest) {
     });
 
     const cookieStore = await cookies();
-    cookieStore.set(USER_COOKIE, result.owner.id, {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/"
-    });
+    cookieStore.set(USER_COOKIE, result.owner.id, sessionCookieOptions());
 
     return NextResponse.json({
       projectId: result.project.id,
